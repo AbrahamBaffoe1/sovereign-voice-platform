@@ -1,0 +1,55 @@
+name: bootstrap-smoke
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - 'training/data/**'
+      - 'training/configs/source_catalog.yaml'
+      - 'training/configs/bootstrap_corpora.yaml'
+      - '.github/workflows/bootstrap-smoke.yml'
+
+jobs:
+  acquire:
+    name: '${{ matrix.language }}-${{ matrix.task }}'
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - language: tw
+            task: asr
+          - language: tw
+            task: tts
+          - language: gaa
+            task: asr
+          - language: gaa
+            task: tts
+          - language: ee
+            task: asr
+          - language: ee
+            task: tts
+          - language: ha
+            task: asr
+          - language: ha
+            task: tts
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: pip
+      - run: python -m pip install -U pip
+      - run: pip install -e '.[data]'
+      - name: Acquire one real sample from each planned training source
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: >-
+          python -m training.data.acquire
+          --language '${{ matrix.language }}'
+          --task '${{ matrix.task }}'
+          --max-samples 1
+      - name: Show acquisition receipts
+        if: always()
+        run: |
+          find data/bootstrap -name 'SOURCE_RECEIPT.json' -print -exec cat {} \; 2>/dev/null || true
