@@ -24,8 +24,8 @@ on:
         required: true
         default: false
         type: boolean
-  # The first commit of this workflow starts the approved real execution automatically if a
-  # compatible self-hosted Linux runner is already registered. Future source-code pushes do not.
+  # A workflow-file change requests a new approved execution. Normal source pushes do not start an
+  # expensive training job; they only run CI until this workflow is intentionally changed/dispatches.
   push:
     branches: [main]
     paths:
@@ -41,11 +41,12 @@ concurrency:
 jobs:
   execute:
     # Persistent data/model state must live outside GITHUB_WORKSPACE. A self-hosted runner is the
-    # only GitHub Actions boundary here that can own both a mounted training disk and an NVIDIA GPU.
+    # GitHub Actions boundary that can own both a mounted training disk and an NVIDIA GPU.
     runs-on: [self-hosted, linux, x64]
     timeout-minutes: 4320
     env:
       VOICE_EXECUTION_ROOT: ${{ vars.VOICE_EXECUTION_ROOT || '/srv/sovereign-voice' }}
+      VOICE_SOURCE_SHA: ${{ github.sha }}
       HF_TOKEN: ${{ secrets.HF_TOKEN }}
       EXEC_LANGUAGE: ${{ inputs.language || 'all' }}
       EXEC_MIN_FREE_GB: ${{ inputs.min_free_gb || '150' }}
@@ -96,7 +97,8 @@ jobs:
         if: always()
         shell: bash
         run: |
-          echo "Execution root: $VOICE_EXECUTION_ROOT"
-          echo "Environment:    $VOICE_EXECUTION_ROOT/state/EXECUTION_ENVIRONMENT.json"
-          echo "Run state:      $VOICE_EXECUTION_ROOT/state/REAL_EXECUTION.json"
-          echo "Persistent log: $VOICE_EXECUTION_ROOT/logs/real-execution.log"
+          echo "Source revision: $VOICE_SOURCE_SHA"
+          echo "Execution root:  $VOICE_EXECUTION_ROOT"
+          echo "Environment:     $VOICE_EXECUTION_ROOT/state/EXECUTION_ENVIRONMENT.json"
+          echo "Run state:       $VOICE_EXECUTION_ROOT/state/REAL_EXECUTION.json"
+          echo "Persistent log:  $VOICE_EXECUTION_ROOT/logs/real-execution.log"
