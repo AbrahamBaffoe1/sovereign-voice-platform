@@ -9,17 +9,18 @@ import io
 import json
 import os
 import re
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any
 
 import numpy as np
 import soundfile as sf
 
 from app.services.corpus_audio import decode_audio
 from training.common.manifest import file_sha256, normalize_transcript
-from training.data.bootstrap_plan import BootstrapPlan, PlannedSource, Task
+from training.data.bootstrap_plan import BootstrapPlan, Task
 from training.data.catalog import DataSource, SourceCatalog
 
 _METADATA_FIELDS = [
