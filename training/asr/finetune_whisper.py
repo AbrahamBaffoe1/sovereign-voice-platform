@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import numpy as np
+import soundfile as sf
 
 from training.common.language_profile import load_language_profile
 from training.common.manifest import file_sha256
@@ -45,6 +46,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--learning-rate", type=float, default=1e-5)
     parser.add_argument("--fp16", action="store_true")
     parser.add_argument("--bf16", action="store_true")
+    parser.add_argument(
+        "--resume-from-checkpoint",
+        default=None,
+        help="Use 'auto' for the highest checkpoint-* under --output, or pass an explicit checkpoint directory.",
+    )
     return parser.parse_args()
 
 
@@ -98,6 +104,48 @@ def _dataset_lineage(args: argparse.Namespace) -> tuple[Path | None, dict[str, A
     return version_path, payload
 
 
+def _latest_checkpoint(output: Path) -> Path | None:
+    """Return the checkpoint with the highest trainer step, ignoring unrelated directories in the run folder."""
+    best: tuple[int, Path] | None = None
+    if not output.exists():
+        return None
+    for path in output.glob("checkpoint-*"):
+        if not path.is_dir():
+            continue
+        try:
+            step = int(path.name.removeprefix("checkpoint-"))
+        except ValueError:
+            continue
+        if best is None or step > best[0]:
+            best = (step, path)
+    return best[1] if best else None
+
+
+def _resolve_resume_checkpoint(output: Path, requested: str | None) -> str | None:
+    """Resolve resume intent before model loading so bad checkpoint paths fail without spending GPU memory."""
+    if requested is None:
+        return None
+    if requested == "auto":
+        latest = _latest_checkpoint(output)
+        return str(latest) if latest else None
+    path = Path(requested).expanduser().resolve()
+    if not path.is_dir():
+        raise SystemExit(f"resume checkpoint does not exist: {path}")
+    return str(path)
+
+
+def _read_frozen_wav(path: str | Path, *, required_sample_rate: int = 16000) -> np.ndarray:
+    """Read the compiler-owned WAV directly and re-check the ASR audio contract at the training boundary."""
+    waveform, sample_rate = sf.read(str(path), dtype="float32", always_2d=False)
+    if sample_rate != required_sample_rate:
+        raise ValueError(f"{path}: expected {required_sample_rate} Hz, found {sample_rate} Hz")
+    if waveform.ndim != 1:
+        raise ValueError(f"{path}: expected mono audio, found shape {waveform.shape}")
+    if not np.isfinite(waveform).all():
+        raise ValueError(f"{path}: waveform contains non-finite samples")
+    return np.asarray(waveform, dtype=np.float32)
+
+
 @dataclass
 class DataCollatorSpeechSeq2SeqWithPadding:
     """Pad acoustic features and decoder labels independently while masking label padding from loss."""
@@ -132,10 +180,11 @@ def main() -> None:
     validation_path = args.validation if validation_rows else None
     version_path, dataset_version = _dataset_lineage(args)
     experiment = resolve_experiment(args)
+    resume_checkpoint = _resolve_resume_checkpoint(args.output, args.resume_from_checkpoint)
 
     try:
         import evaluate
-        from datasets import Audio, DatasetDict, load_dataset
+        from datasets import DatasetDict, load_dataset
         from transformers import (
             Seq2SeqTrainer,
             Seq2SeqTrainingArguments,
@@ -150,14 +199,6 @@ def main() -> None:
         data_files["validation"] = str(validation_path)
     data = load_dataset("json", data_files=data_files)
     assert isinstance(data, DatasetDict)
-
-    def expose_audio(row: dict[str, Any]) -> dict[str, Any]:
-        """Expose manifest paths through datasets.Audio so decoding/resampling remains lazy."""
-        row["audio"] = row["audio_filepath"]
-        return row
-
-    data = data.map(expose_audio)
-    data = data.cast_column("audio", Audio(sampling_rate=16000))
 
     if experiment.language_token_mode == "explicit":
         processor = WhisperProcessor.from_pretrained(
@@ -176,10 +217,12 @@ def main() -> None:
         model.generation_config.task = "transcribe"
 
     def prepare(row: dict[str, Any]) -> dict[str, Any]:
-        """Convert one waveform into Whisper log-mel features and tokenize the reviewed transcript."""
-        audio = row["audio"]
+        """Convert one compiler-normalized WAV into Whisper log-mel features and reviewed transcript tokens."""
+        # corpus-v0 already owns decoding/resampling. Reading the local WAV directly keeps training
+        # independent of Hugging Face Audio/TorchCodec representation changes and validates the freeze.
+        waveform = _read_frozen_wav(str(row["audio_filepath"]))
         row["input_features"] = processor.feature_extractor(
-            audio["array"], sampling_rate=audio["sampling_rate"]
+            waveform, sampling_rate=16000
         ).input_features[0]
         row["labels"] = processor.tokenizer(str(row["text"])).input_ids
         return row
@@ -244,7 +287,10 @@ def main() -> None:
         compute_metrics=compute_metrics if has_validation else None,
         processing_class=processor,
     )
-    trainer.train()
+
+    # Trainer checkpoints contain optimizer/scheduler/RNG state, not just model weights. Passing the
+    # selected directory back to Trainer is what makes a resumed run numerically continue the old run.
+    trainer.train(resume_from_checkpoint=resume_checkpoint)
     final = args.output / "final"
     trainer.save_model(str(final))
     processor.save_pretrained(str(final))
@@ -267,6 +313,8 @@ def main() -> None:
                 "dataset_fingerprint_sha256": (
                     dataset_version.get("fingerprint_sha256") if dataset_version else None
                 ),
+                "resume_requested": args.resume_from_checkpoint,
+                "resumed_from_checkpoint": resume_checkpoint,
                 "max_steps": args.max_steps,
                 "batch_size": args.batch_size,
                 "gradient_accumulation": args.gradient_accumulation,

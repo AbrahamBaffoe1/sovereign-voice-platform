@@ -1,0 +1,102 @@
+name: real-voice-training
+
+on:
+  workflow_dispatch:
+    inputs:
+      language:
+        description: Language to execute (or all)
+        required: true
+        default: all
+        type: choice
+        options: [all, tw, gaa, ee, ha]
+      min_free_gb:
+        description: Minimum free space required on the persistent workspace
+        required: true
+        default: "150"
+        type: string
+      require_external_eval:
+        description: Fail ASR launch if a frozen external benchmark is unavailable
+        required: true
+        default: false
+        type: boolean
+      force_reacquire:
+        description: Ignore reusable source receipts and reacquire public corpus rows
+        required: true
+        default: false
+        type: boolean
+  # The first commit of this workflow starts the approved real execution automatically if a
+  # compatible self-hosted Linux runner is already registered. Future source-code pushes do not.
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/real-execution.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: sovereign-voice-real-execution
+  cancel-in-progress: false
+
+jobs:
+  execute:
+    # Persistent data/model state must live outside GITHUB_WORKSPACE. A self-hosted runner is the
+    # only GitHub Actions boundary here that can own both a mounted training disk and an NVIDIA GPU.
+    runs-on: [self-hosted, linux, x64]
+    timeout-minutes: 4320
+    env:
+      VOICE_EXECUTION_ROOT: ${{ vars.VOICE_EXECUTION_ROOT || '/srv/sovereign-voice' }}
+      HF_TOKEN: ${{ secrets.HF_TOKEN }}
+      EXEC_LANGUAGE: ${{ inputs.language || 'all' }}
+      EXEC_MIN_FREE_GB: ${{ inputs.min_free_gb || '150' }}
+      EXEC_REQUIRE_EXTERNAL_EVAL: ${{ inputs.require_external_eval || false }}
+      EXEC_FORCE_REACQUIRE: ${{ inputs.force_reacquire || false }}
+
+    steps:
+      - name: Checkout source only
+        uses: actions/checkout@v4
+
+      - name: Use Python 3.11
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Prepare persistent virtual environment
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p "$VOICE_EXECUTION_ROOT"
+          if [[ ! -x "$VOICE_EXECUTION_ROOT/venv/bin/python" ]]; then
+            python -m venv "$VOICE_EXECUTION_ROOT/venv"
+          fi
+          source "$VOICE_EXECUTION_ROOT/venv/bin/activate"
+          python -m pip install --upgrade pip wheel
+          # Reinstall editable source every run, but keep the heavy environment on the persistent disk.
+          pip install -e '.[data,training-asr,asr,training]'
+
+      - name: Execute resumable corpus and ASR pipeline
+        shell: bash
+        run: |
+          set -euo pipefail
+          source "$VOICE_EXECUTION_ROOT/venv/bin/activate"
+          args=(
+            --workspace "$VOICE_EXECUTION_ROOT"
+            --language "$EXEC_LANGUAGE"
+            --min-free-gb "$EXEC_MIN_FREE_GB"
+          )
+          if [[ "$EXEC_REQUIRE_EXTERNAL_EVAL" == "true" ]]; then
+            args+=(--require-external-eval)
+          fi
+          if [[ "$EXEC_FORCE_REACQUIRE" == "true" ]]; then
+            args+=(--force-reacquire)
+          fi
+          python -m training.execution.run_pipeline "${args[@]}"
+
+      - name: Print durable state paths
+        if: always()
+        shell: bash
+        run: |
+          echo "Execution root: $VOICE_EXECUTION_ROOT"
+          echo "Environment:    $VOICE_EXECUTION_ROOT/state/EXECUTION_ENVIRONMENT.json"
+          echo "Run state:      $VOICE_EXECUTION_ROOT/state/REAL_EXECUTION.json"
+          echo "Persistent log: $VOICE_EXECUTION_ROOT/logs/real-execution.log"

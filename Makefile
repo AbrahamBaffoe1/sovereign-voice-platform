@@ -2,11 +2,12 @@ DATA_ROOT ?= data/bootstrap
 ARTIFACTS_ROOT ?= artifacts/bootstrap
 EXPERIMENTS_ROOT ?= artifacts/experiments/asr
 TTS_READINESS_ROOT ?= artifacts/tts-readiness
+EXECUTION_ROOT ?= /srv/sovereign-voice
 MIN_FREE_GB ?= 0
 LANGUAGE ?= all
 TASK ?= both
 
-.PHONY: install install-all data-install dev test lint typecheck run compose-up compose-down validate corpus-plan corpus-v0 corpus-v0-strict asr-plan asr-baseline asr-baseline-strict tts-readiness tts-readiness-strict
+.PHONY: install install-all data-install dev test lint typecheck run compose-up compose-down validate corpus-plan corpus-v0 corpus-v0-strict asr-plan asr-baseline asr-baseline-strict tts-readiness tts-readiness-strict real-execution real-execution-strict
 
 install:
 	python -m pip install -e .
@@ -48,16 +49,22 @@ asr-plan:
 	python -m training.asr.run_baseline --language $(LANGUAGE) --artifacts-root $(ARTIFACTS_ROOT) --output-root $(EXPERIMENTS_ROOT)
 
 asr-baseline:
-	python -m training.asr.run_baseline --language $(LANGUAGE) --artifacts-root $(ARTIFACTS_ROOT) --output-root $(EXPERIMENTS_ROOT) --execute
+	python -m training.asr.run_baseline --language $(LANGUAGE) --artifacts-root $(ARTIFACTS_ROOT) --output-root $(EXPERIMENTS_ROOT) --resume --execute
 
 asr-baseline-strict:
-	python -m training.asr.run_baseline --language $(LANGUAGE) --artifacts-root $(ARTIFACTS_ROOT) --output-root $(EXPERIMENTS_ROOT) --require-external-eval --execute
+	python -m training.asr.run_baseline --language $(LANGUAGE) --artifacts-root $(ARTIFACTS_ROOT) --output-root $(EXPERIMENTS_ROOT) --require-external-eval --resume --execute
 
 tts-readiness:
 	python -m training.tts.readiness --language $(LANGUAGE) --artifacts-root $(ARTIFACTS_ROOT) --output-root $(TTS_READINESS_ROOT)
 
 tts-readiness-strict:
 	python -m training.tts.readiness --language $(LANGUAGE) --artifacts-root $(ARTIFACTS_ROOT) --output-root $(TTS_READINESS_ROOT) --strict
+
+real-execution:
+	python -m training.execution.run_pipeline --workspace $(EXECUTION_ROOT) --language $(LANGUAGE) --min-free-gb $(MIN_FREE_GB)
+
+real-execution-strict:
+	python -m training.execution.run_pipeline --workspace $(EXECUTION_ROOT) --language $(LANGUAGE) --min-free-gb $(MIN_FREE_GB) --require-external-eval
 
 compose-up:
 	docker compose up --build

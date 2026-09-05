@@ -50,6 +50,7 @@ training-asr = [
   "evaluate>=0.4,<1",
   "accelerate>=1.10,<2",
   "jiwer>=4,<5",
+  "tensorboard>=2.21,<3",
   "torch>=2.6",
 ]
 training = [

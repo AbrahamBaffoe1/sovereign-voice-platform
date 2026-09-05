@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
 import subprocess
 import sys
 from datetime import UTC, datetime
@@ -17,10 +18,12 @@ _LANGUAGES = ("tw", "gaa", "ee", "ha")
 
 
 def _now() -> str:
+    """Return an offset-aware timestamp for experiment lineage."""
     return datetime.now(UTC).isoformat()
 
 
 def _jsonl_rows(path: Path) -> int:
+    """Count manifest rows as a stream so large corpora do not need to fit in memory."""
     if not path.exists():
         return 0
     with path.open("r", encoding="utf-8") as handle:
@@ -28,7 +31,7 @@ def _jsonl_rows(path: Path) -> int:
 
 
 def _audit_split_rows(path: Path, split: str) -> int:
-    """Count one audit split as a stream so very large corpus manifests never need to fit in RAM."""
+    """Count one audit split while validating each JSON object encountered."""
     if not path.exists():
         return 0
     count = 0
@@ -48,6 +51,7 @@ def _audit_split_rows(path: Path, split: str) -> int:
 
 
 def _read_json_object(path: Path) -> dict[str, Any]:
+    """Load one JSON object and fail on missing/malformed lineage files."""
     if not path.exists():
         raise FileNotFoundError(path)
     payload = json.loads(path.read_text(encoding="utf-8"))
@@ -57,6 +61,7 @@ def _read_json_object(path: Path) -> dict[str, Any]:
 
 
 def _safe_model_token(model: str) -> str:
+    """Convert a model id into a stable path component without losing its human-readable identity."""
     return model.rsplit("/", 1)[-1].replace("_", "-")
 
 
@@ -75,6 +80,7 @@ def build_language_plan(
     require_external_eval: bool,
     device: str,
     compute_type: str,
+    resume: bool = False,
 ) -> dict[str, Any]:
     """Resolve one baseline entirely from frozen corpus artifacts and version-controlled language policy."""
     if language not in _LANGUAGES:
@@ -156,6 +162,8 @@ def build_language_plan(
         train_command.append("--fp16")
     elif precision == "bf16":
         train_command.append("--bf16")
+    if resume:
+        train_command.extend(["--resume-from-checkpoint", "auto"])
 
     export_command = [
         sys.executable,
@@ -215,7 +223,7 @@ def build_language_plan(
         )
 
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "language": language,
         "run_name": run_name,
         "run_dir": str(run_dir),
@@ -247,6 +255,7 @@ def build_language_plan(
             "precision": precision,
             "ct2_quantization": quantization,
         },
+        "resume": resume,
         "train_command": train_command,
         "export_command": export_command,
         "evaluations": evaluations,
@@ -254,30 +263,110 @@ def build_language_plan(
 
 
 def _write_result(run_dir: Path, result: dict[str, Any]) -> None:
+    """Persist terminal run state independently from the original immutable execution plan."""
     (run_dir / "RUN_RESULT.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def _execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    """Execute a prevalidated run sequentially and persist success or failure lineage."""
+def _lineage_signature(plan: dict[str, Any]) -> dict[str, Any]:
+    """Extract the fields that must never change when a failed experiment is resumed."""
+    dataset = plan["dataset"]
+    assert isinstance(dataset, dict)
+    return {
+        "language": plan["language"],
+        "base_model": plan["base_model"],
+        "profile_sha256": plan["profile_sha256"],
+        "dataset_version_sha256": dataset["version_sha256"],
+        "selection_policy": plan["selection_policy"],
+        "hyperparameters": plan["hyperparameters"],
+    }
+
+
+def _assert_resume_lineage(run_dir: Path, plan: dict[str, Any]) -> dict[str, Any]:
+    """Refuse to continue checkpoints if corpus/profile/hyperparameters differ from the run that created them."""
+    plan_path = run_dir / "RUN_PLAN.json"
+    if not plan_path.exists():
+        raise RuntimeError(f"cannot resume experiment without original RUN_PLAN.json: {run_dir}")
+    existing = _read_json_object(plan_path)
+    if _lineage_signature(existing) != _lineage_signature(plan):
+        raise RuntimeError(
+            "resume lineage mismatch: existing checkpoints were created with a different corpus, profile, "
+            "selection policy or hyperparameter set"
+        )
+    return existing
+
+
+def _final_model_matches_plan(final_hf: Path, plan: dict[str, Any]) -> bool:
+    """Trust an existing final model only when its recorded corpus fingerprint matches the current frozen plan."""
+    experiment_path = final_hf / "experiment.json"
+    if not experiment_path.exists():
+        return False
+    experiment = _read_json_object(experiment_path)
+    dataset = plan["dataset"]
+    assert isinstance(dataset, dict)
+    version = dataset["version"]
+    assert isinstance(version, dict)
+    return (
+        experiment.get("dataset_fingerprint_sha256") == version.get("fingerprint_sha256")
+        and experiment.get("profile_sha256") == plan.get("profile_sha256")
+        and experiment.get("base_model") == plan.get("base_model")
+    )
+
+
+def _execute_plan(plan: dict[str, Any], *, resume: bool = False) -> dict[str, Any]:
+    """Execute or resume a lineage-bound run while treating export/evaluation as reproducible derived phases."""
     run_dir = Path(str(plan["run_dir"]))
+    final_hf = run_dir / "hf" / "final"
+    ct2_dir = run_dir / "ct2"
+    result_path = run_dir / "RUN_RESULT.json"
+
     if run_dir.exists() and any(run_dir.iterdir()):
-        raise RuntimeError(f"refusing to overwrite an existing experiment: {run_dir}")
-    run_dir.mkdir(parents=True, exist_ok=True)
-    started_at = _now()
-    started = {**plan, "status": "running", "started_at": started_at}
-    (run_dir / "RUN_PLAN.json").write_text(json.dumps(started, ensure_ascii=False, indent=2), encoding="utf-8")
+        if result_path.exists():
+            previous_result = _read_json_object(result_path)
+            if previous_result.get("status") == "completed":
+                _assert_resume_lineage(run_dir, plan)
+                return previous_result
+        if not resume:
+            raise RuntimeError(f"refusing to overwrite an existing experiment: {run_dir}")
+        existing_plan = _assert_resume_lineage(run_dir, plan)
+        started_at = str(existing_plan.get("started_at") or _now())
+    else:
+        run_dir.mkdir(parents=True, exist_ok=True)
+        started_at = _now()
+        started = {**plan, "status": "running", "started_at": started_at}
+        (run_dir / "RUN_PLAN.json").write_text(
+            json.dumps(started, ensure_ascii=False, indent=2), encoding="utf-8"
+        )
 
     completed_evaluations: list[dict[str, Any]] = []
     try:
-        subprocess.run([str(item) for item in plan["train_command"]], check=True)
-        subprocess.run([str(item) for item in plan["export_command"]], check=True)
+        # A failed export or evaluation must not force another multi-hour GPU training job. We only skip
+        # training when the final Hugging Face model proves it belongs to this exact frozen corpus/profile.
+        if not _final_model_matches_plan(final_hf, plan):
+            subprocess.run([str(item) for item in plan["train_command"]], check=True)
+            if not _final_model_matches_plan(final_hf, plan):
+                raise RuntimeError("training exited without a lineage-matching final model")
+
+        export_marker = run_dir / "CT2_EXPORT.json"
+        if not export_marker.exists():
+            # CTranslate2 is derived from the final HF checkpoint. A partial directory is safe to remove and
+            # regenerate; the authoritative training checkpoint above is never deleted here.
+            if ct2_dir.exists():
+                shutil.rmtree(ct2_dir)
+            subprocess.run([str(item) for item in plan["export_command"]], check=True)
+            export_marker.write_text(
+                json.dumps({"completed_at": _now(), "model": str(ct2_dir)}, indent=2),
+                encoding="utf-8",
+            )
+
         for evaluation in plan["evaluations"]:
-            subprocess.run([str(item) for item in evaluation["command"]], check=True)
+            output = run_dir / f"{evaluation['name']}.json"
+            if not output.exists():
+                subprocess.run([str(item) for item in evaluation["command"]], check=True)
             completed_evaluations.append(
                 {
                     "name": evaluation["name"],
                     "rows": evaluation["rows"],
-                    "output": str(run_dir / f"{evaluation['name']}.json"),
+                    "output": str(output),
                 }
             )
     except BaseException as exc:
@@ -298,14 +387,15 @@ def _execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
         "started_at": started_at,
         "completed_at": _now(),
         "completed_evaluations": completed_evaluations,
-        "hf_final": str(run_dir / "hf" / "final"),
-        "ct2_model": str(run_dir / "ct2"),
+        "hf_final": str(final_hf),
+        "ct2_model": str(ct2_dir),
     }
     _write_result(run_dir, result)
     return result
 
 
 def main() -> None:
+    """Plan or execute one or all frozen-corpus Whisper-small baselines."""
     parser = argparse.ArgumentParser(description="Plan or execute corpus-v0 Whisper-small ASR baselines")
     parser.add_argument("--language", choices=[*_LANGUAGES, "all"], default="all")
     parser.add_argument("--artifacts-root", type=Path, default=Path("artifacts/bootstrap"))
@@ -324,6 +414,7 @@ def main() -> None:
     parser.add_argument("--device", default="auto")
     parser.add_argument("--compute-type", default="default")
     parser.add_argument("--require-external-eval", action="store_true")
+    parser.add_argument("--resume", action="store_true")
     parser.add_argument("--execute", action="store_true")
     args = parser.parse_args()
 
@@ -343,6 +434,7 @@ def main() -> None:
             require_external_eval=args.require_external_eval,
             device=args.device,
             compute_type=args.compute_type,
+            resume=args.resume,
         )
         for language in languages
     ]
@@ -350,7 +442,7 @@ def main() -> None:
         print(json.dumps({"status": "planned", "runs": plans}, ensure_ascii=False, indent=2))
         return
 
-    results = [_execute_plan(plan) for plan in plans]
+    results = [_execute_plan(plan, resume=args.resume) for plan in plans]
     print(json.dumps({"status": "completed", "runs": results}, ensure_ascii=False, indent=2))
 
 
