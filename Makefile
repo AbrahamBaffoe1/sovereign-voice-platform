@@ -1,10 +1,19 @@
-.PHONY: install install-all dev test lint typecheck run compose-up compose-down validate
+DATA_ROOT ?= data/bootstrap
+ARTIFACTS_ROOT ?= artifacts/bootstrap
+MIN_FREE_GB ?= 0
+LANGUAGE ?= all
+TASK ?= both
+
+.PHONY: install install-all data-install dev test lint typecheck run compose-up compose-down validate corpus-plan corpus-v0 corpus-v0-strict
 
 install:
 	python -m pip install -e .
 
 install-all:
-	python -m pip install -e '.[asr,tts-chatterbox,training,dev]'
+	python -m pip install -e '.[asr,tts-chatterbox,data,training,dev]'
+
+data-install:
+	python -m pip install -e '.[data]'
 
 dev:
 	python -m pip install -e '.[dev]'
@@ -23,6 +32,15 @@ typecheck:
 
 validate:
 	python -m compileall -q services training tests scripts
+
+corpus-plan:
+	python -m training.data.bootstrap --language $(LANGUAGE) --task $(TASK) --include-eval --data-root $(DATA_ROOT) --artifacts-root $(ARTIFACTS_ROOT) --min-free-gb $(MIN_FREE_GB) --dry-run
+
+corpus-v0:
+	python -m training.data.bootstrap --language $(LANGUAGE) --task $(TASK) --include-eval --data-root $(DATA_ROOT) --artifacts-root $(ARTIFACTS_ROOT) --min-free-gb $(MIN_FREE_GB)
+
+corpus-v0-strict:
+	python -m training.data.bootstrap --language $(LANGUAGE) --task $(TASK) --require-eval --data-root $(DATA_ROOT) --artifacts-root $(ARTIFACTS_ROOT) --min-free-gb $(MIN_FREE_GB)
 
 compose-up:
 	docker compose up --build
