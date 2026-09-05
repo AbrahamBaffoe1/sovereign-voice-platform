@@ -42,9 +42,12 @@ concurrency:
 
 jobs:
   execute:
-    # Persistent data/model state must live outside GITHUB_WORKSPACE. A self-hosted runner is the
-    # GitHub Actions boundary that can own both a mounted training disk and an NVIDIA GPU.
-    runs-on: [self-hosted, linux, x64]
+    # Never execute a manually dispatched copy of this workflow from a feature/PR branch. The source SHA
+    # written into model lineage must be a reviewed main-branch revision.
+    if: github.ref == 'refs/heads/main'
+    # `sovereign-gpu` is a deliberate custom label: a generic self-hosted CPU runner must not pick up a
+    # job that will download corpora and install a CUDA training stack before discovering the mismatch.
+    runs-on: [self-hosted, linux, x64, sovereign-gpu]
     timeout-minutes: 4320
     env:
       VOICE_EXECUTION_ROOT: ${{ vars.VOICE_EXECUTION_ROOT || '/srv/sovereign-voice' }}
@@ -68,7 +71,7 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          mkdir -p "$VOICE_EXECUTION_ROOT"
+          mkdir -p "$VOICE_EXECUTION_ROOT/state"
           if [[ ! -x "$VOICE_EXECUTION_ROOT/venv/bin/python" ]]; then
             python -m venv "$VOICE_EXECUTION_ROOT/venv"
           fi
@@ -76,6 +79,9 @@ jobs:
           python -m pip install --upgrade pip wheel
           # Reinstall editable source every run, but keep the heavy environment on the persistent disk.
           pip install -e '.[data,training-asr,asr,training]'
+          # This is reproduction/debug evidence. pyproject.toml remains dependency policy; the snapshot
+          # records what the real machine actually resolved on this particular model run.
+          python -m pip freeze > "$VOICE_EXECUTION_ROOT/state/pip-freeze.txt"
 
       - name: Execute resumable corpus and ASR pipeline
         shell: bash
@@ -103,4 +109,5 @@ jobs:
           echo "Execution root:  $VOICE_EXECUTION_ROOT"
           echo "Environment:     $VOICE_EXECUTION_ROOT/state/EXECUTION_ENVIRONMENT.json"
           echo "Run state:       $VOICE_EXECUTION_ROOT/state/REAL_EXECUTION.json"
+          echo "Dependencies:    $VOICE_EXECUTION_ROOT/state/pip-freeze.txt"
           echo "Persistent log:  $VOICE_EXECUTION_ROOT/logs/real-execution.log"
