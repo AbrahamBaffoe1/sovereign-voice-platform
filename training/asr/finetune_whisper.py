@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -10,13 +11,20 @@ from typing import Any
 import numpy as np
 
 from training.common.language_profile import load_language_profile
+from training.common.manifest import file_sha256
 
 
 def parse_args() -> argparse.Namespace:
     """Expose reproducible training knobs and an optional language profile as the source of defaults."""
     parser = argparse.ArgumentParser(description="Fine-tune Whisper on a local speech corpus")
     parser.add_argument("--train", type=Path, required=True)
-    parser.add_argument("--validation", type=Path, required=True)
+    parser.add_argument(
+        "--validation",
+        type=Path,
+        default=None,
+        help="Optional internal validation manifest. Omit it rather than reusing the external release benchmark.",
+    )
+    parser.add_argument("--dataset-version", type=Path, default=None)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--profile", type=Path, default=None)
     parser.add_argument("--base-model", default=None)
@@ -66,6 +74,30 @@ def resolve_experiment(args: argparse.Namespace) -> ResolvedASRExperiment:
     return ResolvedASRExperiment(base_model, mode, decoder_language)
 
 
+def _jsonl_rows(path: Path | None) -> int:
+    """Count non-empty manifest rows without loading an entire corpus into memory."""
+    if path is None or not path.exists():
+        return 0
+    with path.open("r", encoding="utf-8") as handle:
+        return sum(1 for line in handle if line.strip())
+
+
+def _dataset_lineage(args: argparse.Namespace) -> tuple[Path | None, dict[str, Any] | None]:
+    """Load the frozen dataset identity that must accompany every trained checkpoint."""
+    version_path = args.dataset_version
+    if version_path is None:
+        candidate = args.train.parent / "dataset_version.json"
+        version_path = candidate if candidate.exists() else None
+    if version_path is None:
+        return None, None
+    payload = json.loads(version_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise SystemExit(f"invalid dataset version file: {version_path}")
+    if int(payload.get("accepted", 0)) < 1:
+        raise SystemExit(f"refusing to train on an empty frozen corpus: {version_path}")
+    return version_path, payload
+
+
 @dataclass
 class DataCollatorSpeechSeq2SeqWithPadding:
     """Pad acoustic features and decoder labels independently while masking label padding from loss."""
@@ -87,9 +119,20 @@ class DataCollatorSpeechSeq2SeqWithPadding:
 
 
 def main() -> None:
-    """Prepare local manifests, fine-tune Whisper, evaluate WER and save model plus processor together."""
+    """Prepare frozen manifests, fine-tune Whisper, and save model/processor plus complete lineage."""
     args = parse_args()
+    if args.fp16 and args.bf16:
+        raise SystemExit("choose at most one of --fp16 and --bf16")
+    if args.max_steps < 1 or args.batch_size < 1 or args.gradient_accumulation < 1:
+        raise SystemExit("max steps, batch size and gradient accumulation must be positive")
+    train_rows = _jsonl_rows(args.train)
+    if train_rows < 1:
+        raise SystemExit(f"training manifest is empty or missing: {args.train}")
+    validation_rows = _jsonl_rows(args.validation)
+    validation_path = args.validation if validation_rows else None
+    version_path, dataset_version = _dataset_lineage(args)
     experiment = resolve_experiment(args)
+
     try:
         import evaluate
         from datasets import Audio, DatasetDict, load_dataset
@@ -102,10 +145,10 @@ def main() -> None:
     except ImportError as exc:
         raise SystemExit("Install training ASR dependencies: pip install -e '.[training-asr]'") from exc
 
-    data = load_dataset(
-        "json",
-        data_files={"train": str(args.train), "validation": str(args.validation)},
-    )
+    data_files = {"train": str(args.train)}
+    if validation_path is not None:
+        data_files["validation"] = str(validation_path)
+    data = load_dataset("json", data_files=data_files)
     assert isinstance(data, DatasetDict)
 
     def expose_audio(row: dict[str, Any]) -> dict[str, Any]:
@@ -143,10 +186,11 @@ def main() -> None:
 
     remove_columns = data["train"].column_names
     data = data.map(prepare, remove_columns=remove_columns, num_proc=1)
-    metric = evaluate.load("wer")
+    metric = evaluate.load("wer") if validation_path is not None else None
 
     def compute_metrics(pred: Any) -> dict[str, float]:
         """Decode generated predictions and labels and return WER percentage for checkpoint selection."""
+        assert metric is not None
         pred_ids = pred.predictions
         label_ids = np.array(pred.label_ids, copy=True)
         label_ids[label_ids == -100] = processor.tokenizer.pad_token_id
@@ -159,37 +203,45 @@ def main() -> None:
         decoder_start_token_id=model.config.decoder_start_token_id,
     )
     args.output.mkdir(parents=True, exist_ok=True)
-    training_args = Seq2SeqTrainingArguments(
-        output_dir=str(args.output),
-        per_device_train_batch_size=args.batch_size,
-        per_device_eval_batch_size=max(1, args.batch_size // 2),
-        gradient_accumulation_steps=args.gradient_accumulation,
-        learning_rate=args.learning_rate,
-        warmup_steps=min(500, max(50, args.max_steps // 10)),
-        max_steps=args.max_steps,
-        gradient_checkpointing=True,
-        fp16=args.fp16,
-        bf16=args.bf16,
-        eval_strategy="steps",
-        eval_steps=250,
-        save_steps=250,
-        logging_steps=25,
-        predict_with_generate=True,
-        generation_max_length=225,
-        load_best_model_at_end=True,
-        metric_for_best_model="wer",
-        greater_is_better=False,
-        save_total_limit=3,
-        report_to=["tensorboard"],
-        remove_unused_columns=False,
-    )
+    has_validation = validation_path is not None
+    training_kwargs: dict[str, Any] = {
+        "output_dir": str(args.output),
+        "per_device_train_batch_size": args.batch_size,
+        "per_device_eval_batch_size": max(1, args.batch_size // 2),
+        "gradient_accumulation_steps": args.gradient_accumulation,
+        "learning_rate": args.learning_rate,
+        "warmup_steps": min(500, max(50, args.max_steps // 10)),
+        "max_steps": args.max_steps,
+        "gradient_checkpointing": True,
+        "fp16": args.fp16,
+        "bf16": args.bf16,
+        "eval_strategy": "steps" if has_validation else "no",
+        "save_strategy": "steps",
+        "save_steps": 250,
+        "logging_steps": 25,
+        "predict_with_generate": has_validation,
+        "generation_max_length": 225,
+        "load_best_model_at_end": has_validation,
+        "save_total_limit": 3,
+        "report_to": ["tensorboard"],
+        "remove_unused_columns": False,
+    }
+    if has_validation:
+        training_kwargs.update(
+            {
+                "eval_steps": 250,
+                "metric_for_best_model": "wer",
+                "greater_is_better": False,
+            }
+        )
+    training_args = Seq2SeqTrainingArguments(**training_kwargs)
     trainer = Seq2SeqTrainer(
         model=model,
         args=training_args,
         train_dataset=data["train"],
-        eval_dataset=data["validation"],
+        eval_dataset=data["validation"] if has_validation else None,
         data_collator=collator,
-        compute_metrics=compute_metrics,
+        compute_metrics=compute_metrics if has_validation else None,
         processing_class=processor,
     )
     trainer.train()
@@ -197,12 +249,30 @@ def main() -> None:
     trainer.save_model(str(final))
     processor.save_pretrained(str(final))
     (final / "experiment.json").write_text(
-        __import__("json").dumps(
+        json.dumps(
             {
                 "base_model": experiment.base_model,
                 "language_token_mode": experiment.language_token_mode,
                 "decoder_language": experiment.decoder_language,
                 "profile": str(args.profile) if args.profile else None,
+                "profile_sha256": file_sha256(args.profile) if args.profile else None,
+                "train_manifest": str(args.train),
+                "train_manifest_sha256": file_sha256(args.train),
+                "train_rows": train_rows,
+                "validation_manifest": str(validation_path) if validation_path else None,
+                "validation_manifest_sha256": file_sha256(validation_path) if validation_path else None,
+                "validation_rows": validation_rows,
+                "selection_policy": "best_validation_wer" if has_validation else "fixed_steps_final",
+                "dataset_version": str(version_path) if version_path else None,
+                "dataset_fingerprint_sha256": (
+                    dataset_version.get("fingerprint_sha256") if dataset_version else None
+                ),
+                "max_steps": args.max_steps,
+                "batch_size": args.batch_size,
+                "gradient_accumulation": args.gradient_accumulation,
+                "learning_rate": args.learning_rate,
+                "fp16": args.fp16,
+                "bf16": args.bf16,
             },
             indent=2,
         ),
