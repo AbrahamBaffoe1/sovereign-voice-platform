@@ -20,6 +20,7 @@ import numpy as np
 import soundfile as sf
 
 from app.services.corpus_audio import decode_audio
+from training.common.language_profile import load_language_profile
 from training.common.manifest import file_sha256, normalize_transcript
 from training.data.bootstrap_plan import BootstrapPlan, Task
 from training.data.catalog import DataSource, SourceCatalog
@@ -41,6 +42,7 @@ _METADATA_FIELDS = [
     "source_dataset",
     "source_config",
     "source_split",
+    "sample_rate",
 ]
 
 
@@ -54,6 +56,7 @@ class AcquisitionResult:
     imported: int
     skipped: int
     hours: float
+    sample_rate: int
     metadata_path: str
     receipt_path: str
 
@@ -75,6 +78,22 @@ def _field(row: dict[str, Any], source: DataSource, semantic: str) -> Any:
     return row.get(name) if name else None
 
 
+def target_sample_rate(
+    *,
+    language: str,
+    task: Task,
+    profiles_dir: Path = Path("training/configs/languages"),
+) -> int:
+    """Resolve the canonical model-facing sample rate from the version-controlled language profile."""
+    profile = load_language_profile(profiles_dir / f"{language}.yaml")
+    if profile.code != language:
+        raise ValueError(f"profile {profile.source_path} declares {profile.code!r}, expected {language!r}")
+    rate = profile.asr.sample_rate if task == "asr" else profile.tts.sample_rate
+    if rate < 8000:
+        raise ValueError(f"invalid {task} sample rate for {language}: {rate}")
+    return rate
+
+
 def _raw_audio_bytes(value: Any) -> bytes:
     """Extract encoded audio bytes from Hugging Face decode-disabled values and compatible fallbacks."""
     if isinstance(value, (bytes, bytearray, memoryview)):
@@ -94,7 +113,6 @@ def _raw_audio_bytes(value: Any) -> bytes:
             buffer = io.BytesIO()
             sf.write(buffer, np.asarray(array, dtype=np.float32), int(rate), format="WAV", subtype="PCM_16")
             return buffer.getvalue()
-    # Compatibility only: normal streaming acquisition disables media decoding before iteration.
     get_samples = getattr(value, "get_all_samples", None)
     if callable(get_samples):
         samples = get_samples()
@@ -110,9 +128,17 @@ def _raw_audio_bytes(value: Any) -> bytes:
     raise ValueError(f"unsupported provider audio value: {type(value).__name__}")
 
 
-def _write_normalized_wav(payload: bytes, destination: Path, *, max_seconds: float) -> float:
-    """Decode provider audio, resample to 16 kHz mono, and persist deterministic PCM16 WAV."""
-    samples, sample_rate = decode_audio(payload, max_seconds=max_seconds, target_rate=16000)
+def _write_normalized_wav(
+    payload: bytes,
+    destination: Path,
+    *,
+    max_seconds: float,
+    target_rate: int,
+) -> float:
+    """Decode provider audio, resample to the task policy rate, and persist deterministic mono PCM16 WAV."""
+    samples, sample_rate = decode_audio(payload, max_seconds=max_seconds, target_rate=target_rate)
+    if sample_rate != target_rate:
+        raise ValueError(f"audio normalizer returned {sample_rate} Hz, expected {target_rate} Hz")
     destination.parent.mkdir(parents=True, exist_ok=True)
     sf.write(destination, samples, sample_rate, format="WAV", subtype="PCM_16")
     return len(samples) / sample_rate
@@ -184,9 +210,6 @@ def _load_hf_rows(source: DataSource, *, revision: str, token: str | None) -> It
     if source.config and source.config != "default":
         kwargs["name"] = source.config
     dataset = load_dataset(**kwargs)
-    # Hugging Face IterableDataset.decode(False) is the supported streaming API for receiving
-    # paths/encoded bytes without constructing TorchCodec decoders. Applying it to the entire
-    # iterable also avoids provider generators re-encoding Audio values during iteration.
     decode = getattr(dataset, "decode", None)
     if callable(decode):
         dataset = decode(False)
@@ -202,15 +225,64 @@ def _upstream_id(row: dict[str, Any], source: DataSource, index: int) -> str:
 
 
 def _release_stream(iterator: object, rows: object) -> None:
-    """Release abandoned streaming iterators before interpreter finalization.
-
-    Smoke tests intentionally stop after a few examples. PyArrow/Hugging Face streaming readers may
-    own native background state; destroying the iterator while Python is still fully alive prevents
-    that state from being finalized after the interpreter has already torn down its GIL state.
-    """
+    """Release abandoned streaming iterators before interpreter finalization."""
     del iterator
     del rows
     gc.collect()
+
+
+def _metadata_audio_exists(metadata_path: Path) -> bool:
+    """Verify a completed source receipt still points at present normalized audio before reusing it."""
+    try:
+        with metadata_path.open("r", encoding="utf-8-sig", newline="") as handle:
+            for row in csv.DictReader(handle):
+                value = (row.get("audio") or "").strip()
+                if not value or not Path(value).exists():
+                    return False
+    except (OSError, csv.Error):
+        return False
+    return True
+
+
+def _reuse_completed_source(
+    *,
+    source: DataSource,
+    role: str,
+    revision: str,
+    target_rate: int,
+    max_samples: int | None,
+    metadata_path: Path,
+    receipt_path: Path,
+) -> AcquisitionResult | None:
+    """Reuse a fully verified source at the same revision/rate, providing source-level resumability."""
+    if not metadata_path.exists() or not receipt_path.exists():
+        return None
+    try:
+        receipt = json.loads(receipt_path.read_text(encoding="utf-8"))
+        if receipt.get("resolved_revision") != revision:
+            return None
+        if int(receipt.get("sample_rate", 0)) != target_rate:
+            return None
+        if receipt.get("requested_max_samples") != max_samples:
+            return None
+        expected_hash = str(receipt.get("metadata_sha256") or "")
+        if not expected_hash or file_sha256(metadata_path) != expected_hash:
+            return None
+        if not _metadata_audio_exists(metadata_path):
+            return None
+        return AcquisitionResult(
+            source_id=source.source_id,
+            role=role,
+            revision=revision,
+            imported=int(receipt.get("imported", 0)),
+            skipped=int(receipt.get("skipped", 0)),
+            hours=float(receipt.get("hours", 0.0)),
+            sample_rate=target_rate,
+            metadata_path=str(metadata_path),
+            receipt_path=str(receipt_path),
+        )
+    except (OSError, ValueError, TypeError, json.JSONDecodeError):
+        return None
 
 
 def acquire_source(
@@ -220,8 +292,10 @@ def acquire_source(
     task: Task,
     role: str,
     output_root: Path,
+    target_sample_rate: int = 16000,
     max_samples: int | None = None,
     refresh_lock: bool = False,
+    force_reacquire: bool = False,
     max_clip_seconds: float = 120.0,
     token: str | None = None,
 ) -> AcquisitionResult:
@@ -238,6 +312,8 @@ def acquire_source(
         raise ValueError(f"acquisition provider is not implemented for {source.source_id}: {source.provider}")
     if max_samples is not None and max_samples < 1:
         raise ValueError("max_samples must be positive when provided")
+    if target_sample_rate < 8000:
+        raise ValueError("target_sample_rate must be at least 8000 Hz")
 
     revision = resolve_revision(
         source,
@@ -248,8 +324,23 @@ def acquire_source(
     target = output_root / language / task / role / source.source_id
     audio_dir = target / "audio"
     metadata_path = target / "metadata.csv"
+    rejected_path = target / "rejected.jsonl"
     receipt_path = target / "SOURCE_RECEIPT.json"
     audio_dir.mkdir(parents=True, exist_ok=True)
+
+    if not force_reacquire:
+        reused = _reuse_completed_source(
+            source=source,
+            role=role,
+            revision=revision,
+            target_rate=target_sample_rate,
+            max_samples=max_samples,
+            metadata_path=metadata_path,
+            receipt_path=receipt_path,
+        )
+        if reused is not None:
+            return reused
+
     seen: set[str] = set()
     imported = 0
     skipped = 0
@@ -258,31 +349,32 @@ def acquire_source(
     iterator = iter(rows)
 
     try:
-        with metadata_path.open("w", encoding="utf-8", newline="") as handle:
+        with (
+            metadata_path.open("w", encoding="utf-8", newline="") as handle,
+            rejected_path.open("w", encoding="utf-8") as reject_handle,
+        ):
             writer = csv.DictWriter(handle, fieldnames=_METADATA_FIELDS)
             writer.writeheader()
-            index = 0
-            while max_samples is None or imported < max_samples:
-                try:
-                    row = next(iterator)
-                except StopIteration:
+            for index, row in enumerate(iterator):
+                if max_samples is not None and imported >= max_samples:
                     break
                 try:
                     text = normalize_transcript(str(_field(row, source, "text") or ""))
                     if not text:
-                        skipped += 1
-                        index += 1
-                        continue
+                        raise ValueError("empty transcript")
                     payload = _raw_audio_bytes(_field(row, source, "audio"))
                     upstream_id = _upstream_id(row, source, index)
                     provisional = audio_dir / f"{_safe_name(upstream_id)}.wav"
-                    duration = _write_normalized_wav(payload, provisional, max_seconds=max_clip_seconds)
+                    duration = _write_normalized_wav(
+                        payload,
+                        provisional,
+                        max_seconds=max_clip_seconds,
+                        target_rate=target_sample_rate,
+                    )
                     digest = file_sha256(provisional)
                     if digest in seen:
                         provisional.unlink(missing_ok=True)
-                        skipped += 1
-                        index += 1
-                        continue
+                        raise ValueError("duplicate audio within source acquisition")
                     seen.add(digest)
                     final_path = audio_dir / f"{_safe_name(upstream_id)}-{digest[:12]}.wav"
                     if final_path != provisional:
@@ -310,41 +402,55 @@ def acquire_source(
                             "source_dataset": source.repo_id or "",
                             "source_config": source.config or "default",
                             "source_split": source.split,
+                            "sample_rate": target_sample_rate,
                         }
                     )
                     imported += 1
                     hours += duration / 3600.0
-                except Exception:
+                except Exception as exc:
                     skipped += 1
-                finally:
-                    index += 1
+                    reject_handle.write(
+                        json.dumps(
+                            {
+                                "row": index,
+                                "source_id": source.source_id,
+                                "error": f"{type(exc).__name__}:{str(exc)[:500]}",
+                            },
+                            ensure_ascii=False,
+                        )
+                        + "\n"
+                    )
     finally:
         _release_stream(iterator, rows)
 
     metadata_sha = file_sha256(metadata_path)
     receipt = {
-        "schema_version": 1,
+        "schema_version": 2,
         "source": asdict(source),
         "language": language,
         "task": task,
         "role": role,
         "resolved_revision": revision,
+        "sample_rate": target_sample_rate,
+        "requested_max_samples": max_samples,
         "imported": imported,
         "skipped": skipped,
         "hours": round(hours, 6),
         "metadata_sha256": metadata_sha,
+        "rejected_path": str(rejected_path),
         "acquired_at": _now(),
     }
     receipt_path.write_text(json.dumps(receipt, ensure_ascii=False, indent=2), encoding="utf-8")
     return AcquisitionResult(
-        source.source_id,
-        role,
-        revision,
-        imported,
-        skipped,
-        hours,
-        str(metadata_path),
-        str(receipt_path),
+        source_id=source.source_id,
+        role=role,
+        revision=revision,
+        imported=imported,
+        skipped=skipped,
+        hours=hours,
+        sample_rate=target_sample_rate,
+        metadata_path=str(metadata_path),
+        receipt_path=str(receipt_path),
     )
 
 
@@ -383,6 +489,7 @@ def dry_run_plan(
                 "revision": source.revision or "resolve-and-lock",
                 "config": source.config,
                 "split": source.split,
+                "data_files_glob": source.data_files_glob,
                 "license": source.license,
                 "gated": source.gated,
                 "optional": source.optional,
@@ -399,14 +506,17 @@ def acquire_language(
     catalog_path: Path,
     plan_path: Path,
     output_root: Path,
+    profiles_dir: Path = Path("training/configs/languages"),
     include_eval: bool = False,
     max_samples: int | None = None,
     refresh_lock: bool = False,
+    force_reacquire: bool = False,
     token: str | None = None,
 ) -> dict[str, Any]:
     """Acquire every planned source and write separate combined train/evaluation metadata files."""
     catalog = SourceCatalog(catalog_path)
     plan = BootstrapPlan(plan_path)
+    sample_rate = target_sample_rate(language=language, task=task, profiles_dir=profiles_dir)
     results: list[AcquisitionResult] = []
     failures: list[dict[str, str]] = []
     train_metadata: list[Path] = []
@@ -420,8 +530,10 @@ def acquire_language(
                 task=task,
                 role=planned.role,
                 output_root=output_root,
+                target_sample_rate=sample_rate,
                 max_samples=max_samples,
                 refresh_lock=refresh_lock,
+                force_reacquire=force_reacquire,
                 token=token,
             )
             results.append(result)
@@ -438,9 +550,10 @@ def acquire_language(
     train_rows = merge_metadata(train_metadata, train_combined) if train_metadata else 0
     eval_rows = merge_metadata(eval_metadata, eval_combined) if eval_metadata else 0
     summary = {
-        "schema_version": 1,
+        "schema_version": 2,
         "language": language,
         "task": task,
+        "sample_rate": sample_rate,
         "sources": [asdict(result) for result in results],
         "optional_failures": failures,
         "train_rows": train_rows,
@@ -461,10 +574,12 @@ def main() -> None:
     parser.add_argument("--task", choices=["asr", "tts"], required=True)
     parser.add_argument("--catalog", type=Path, default=Path("training/configs/source_catalog.yaml"))
     parser.add_argument("--plan", type=Path, default=Path("training/configs/bootstrap_corpora.yaml"))
+    parser.add_argument("--profiles-dir", type=Path, default=Path("training/configs/languages"))
     parser.add_argument("--output-root", type=Path, default=Path("data/bootstrap"))
     parser.add_argument("--include-eval", action="store_true")
     parser.add_argument("--max-samples", type=int, default=None)
     parser.add_argument("--refresh-lock", action="store_true")
+    parser.add_argument("--force-reacquire", action="store_true")
     parser.add_argument("--dry-run", action="store_true")
     args = parser.parse_args()
     catalog = SourceCatalog(args.catalog)
@@ -472,13 +587,22 @@ def main() -> None:
     if args.dry_run:
         print(
             json.dumps(
-                dry_run_plan(
-                    language=args.language,
-                    task=args.task,
-                    catalog=catalog,
-                    plan=plan,
-                    include_eval=args.include_eval,
-                ),
+                {
+                    "language": args.language,
+                    "task": args.task,
+                    "sample_rate": target_sample_rate(
+                        language=args.language,
+                        task=args.task,
+                        profiles_dir=args.profiles_dir,
+                    ),
+                    "sources": dry_run_plan(
+                        language=args.language,
+                        task=args.task,
+                        catalog=catalog,
+                        plan=plan,
+                        include_eval=args.include_eval,
+                    ),
+                },
                 ensure_ascii=False,
                 indent=2,
             )
@@ -490,9 +614,11 @@ def main() -> None:
         catalog_path=args.catalog,
         plan_path=args.plan,
         output_root=args.output_root,
+        profiles_dir=args.profiles_dir,
         include_eval=args.include_eval,
         max_samples=args.max_samples,
         refresh_lock=args.refresh_lock,
+        force_reacquire=args.force_reacquire,
         token=os.environ.get("HF_TOKEN") or None,
     )
     print(json.dumps(summary, ensure_ascii=False, indent=2))
