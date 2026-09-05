@@ -5,6 +5,7 @@ from pathlib import Path
 from training.data.acquire import dry_run_plan, resolve_revision
 from training.data.bootstrap_plan import BootstrapPlan
 from training.data.catalog import DataSource, SourceCatalog
+from training.data.hf_parquet import required_parquet_columns
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -51,6 +52,23 @@ def test_noncommercial_ewe_navigation_is_excluded_from_production() -> None:
     assert not source.governance_approved
     production = {item.source_id for item in catalog.plan(language="ee", usage="production", task="asr")}
     assert "ewe_navigation_research" not in production
+
+
+def test_waxal_ewe_asr_uses_pinned_raw_parquet_route() -> None:
+    """The upstream WAXAL Ewe index-column mismatch must not regress back to Dataset feature casting."""
+    catalog = SourceCatalog(ROOT / "training/configs/source_catalog.yaml")
+    train = catalog.get("waxal_ewe_asr")
+    evaluation = catalog.get("waxal_ewe_eval")
+    assert train.data_files_glob == "data/ASR/ewe/ewe-train-*.parquet"
+    assert evaluation.data_files_glob == "data/ASR/ewe/ewe-test-*.parquet"
+    assert required_parquet_columns(train) == (
+        "audio",
+        "transcription",
+        "speaker_id",
+        "id",
+        "language",
+    )
+    assert "__index_level_0__" not in required_parquet_columns(train)
 
 
 def test_existing_revision_lock_is_reused_without_network(tmp_path: Path) -> None:
