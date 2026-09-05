@@ -1,0 +1,71 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "sovereign-voice-platform"
+version = "0.1.0"
+description = "Self-hosted ASR + local LLM + multilingual/custom-language TTS platform"
+requires-python = ">=3.11,<3.13"
+dependencies = [
+  "fastapi>=0.116,<1",
+  "uvicorn[standard]>=0.35,<1",
+  "pydantic>=2.11,<3",
+  "pydantic-settings>=2.10,<3",
+  "httpx>=0.28,<1",
+  "python-multipart>=0.0.20,<1",
+  "numpy>=2.0,<3",
+  "soundfile>=0.13,<1",
+  "PyYAML>=6.0,<7",
+  "orjson>=3.10,<4",
+  "prometheus-client>=0.22,<1",
+  "structlog>=25.0,<26",
+]
+
+[project.optional-dependencies]
+asr = [
+  "faster-whisper>=1.2,<2",
+]
+tts-chatterbox = [
+  "chatterbox-tts>=0.1",
+  "torch>=2.6",
+  "torchaudio>=2.6",
+]
+tts-nemo = [
+  "nemo_toolkit[tts]>=2.4",
+  "torch>=2.6",
+]
+training-asr = [
+  "transformers>=4.55,<6",
+  "datasets>=4,<5",
+  "evaluate>=0.4,<1",
+  "accelerate>=1.10,<2",
+  "jiwer>=4,<5",
+  "torch>=2.6",
+]
+training = [
+  "librosa>=0.11,<1",
+  "pandas>=2.3,<3",
+  "scipy>=1.16,<2",
+  "typer>=0.16,<1",
+]
+dev = [
+  "pytest>=8.4,<9",
+  "pytest-asyncio>=1.1,<2",
+  "ruff>=0.12,<1",
+  "mypy>=1.17,<2",
+]
+
+[tool.hatch.build.targets.wheel]
+packages = ["services/api/app", "training"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "SIM", "ASYNC"]
+
+[tool.pytest.ini_options]
+pythonpath = ["services/api"]
+asyncio_mode = "auto"

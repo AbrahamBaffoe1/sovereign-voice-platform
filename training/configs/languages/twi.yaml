@@ -1,0 +1,8 @@
+code: tw
+name: Twi (Akan)
+script: Latin
+normalization: NFC
+# Intentionally empty until it is derived from the collected corpus and reviewed.
+# TODO(intern-linguistics): populate from artifacts/twi/inventory.json, then have two
+# native speakers + a linguist validate graphemes, diacritics, loan words and punctuation.
+alphabet: ""

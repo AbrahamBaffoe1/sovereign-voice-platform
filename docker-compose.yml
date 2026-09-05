@@ -1,0 +1,29 @@
+services:
+  voice-api:
+    build:
+      context: .
+      dockerfile: docker/api.Dockerfile
+    env_file: .env
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./models:/app/models
+      - ./data:/app/data
+      - ./config:/app/config:ro
+    restart: unless-stopped
+
+  # Optional local LLM service. Requires NVIDIA Container Toolkit and a compatible GPU.
+  llm:
+    image: vllm/vllm-openai:latest
+    profiles: ["gpu-llm"]
+    command: ["--model", "${VLLM_MODEL:-Qwen/Qwen3-4B-Instruct-2507}", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "8001:8000"
+    ipc: host
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]

@@ -1,0 +1,35 @@
+languages:
+  en:
+    name: English
+    tts_engine: chatterbox
+    tts_language_id: en
+    normalizer: generic
+  sw:
+    name: Swahili
+    tts_engine: chatterbox
+    tts_language_id: sw
+    normalizer: generic
+  tw:
+    name: Twi
+    tts_engine: nemo
+    normalizer: twi
+    nemo:
+      fastpitch_checkpoint: models/twi/fastpitch.nemo
+      hifigan_checkpoint: models/twi/hifigan.nemo
+      sample_rate: 22050
+  ee:
+    name: Ewe
+    tts_engine: nemo
+    normalizer: generic
+    nemo:
+      fastpitch_checkpoint: models/ewe/fastpitch.nemo
+      hifigan_checkpoint: models/ewe/hifigan.nemo
+      sample_rate: 22050
+  gaa:
+    name: Ga
+    tts_engine: nemo
+    normalizer: generic
+    nemo:
+      fastpitch_checkpoint: models/ga/fastpitch.nemo
+      hifigan_checkpoint: models/ga/hifigan.nemo
+      sample_rate: 22050
