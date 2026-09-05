@@ -36,7 +36,9 @@ permissions:
 
 concurrency:
   group: sovereign-voice-real-execution
-  cancel-in-progress: false
+  # During workflow setup, a newer workflow-file commit must replace a stale queued request. Manual
+  # training dispatches are different: they serialize and never cancel an already running experiment.
+  cancel-in-progress: ${{ github.event_name == 'push' }}
 
 jobs:
   execute:
