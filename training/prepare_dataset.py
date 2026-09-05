@@ -36,6 +36,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--allow-suspicious", action="store_true")
     parser.add_argument("--allow-multichannel", action="store_true")
     parser.add_argument("--required-sample-rate", type=int, default=None)
+    parser.add_argument(
+        "--fixed-split",
+        choices=["train", "validation", "test"],
+        default=None,
+        help="Force every accepted row into one immutable split; intended for externally reserved evaluation corpora.",
+    )
     return parser.parse_args()
 
 
@@ -78,6 +84,24 @@ def _governance_ok(*, consent_attested: bool, governance_approved: bool) -> bool
 def _review_ok(*, transcript_reviewed: bool, upstream_validated: bool) -> bool:
     """Accept locally reviewed transcripts or a catalog-approved upstream validation process."""
     return transcript_reviewed or upstream_validated
+
+
+def _assign_split(
+    *,
+    fixed_split: str | None,
+    training_only: bool,
+    speaker: str | None,
+    digest: str,
+    profile: LanguageTrainingProfile | None,
+) -> str:
+    """Assign a deterministic split, while allowing governed held-out corpora to remain physically fixed."""
+    if fixed_split is not None:
+        return fixed_split
+    if training_only:
+        return "train"
+    split_key = speaker if profile and profile.corpus.split_unit == "speaker" else digest
+    assert split_key is not None
+    return stable_partition(split_key)
 
 
 def main() -> None:
@@ -127,7 +151,15 @@ def main() -> None:
             if not text:
                 reasons.append("empty_text")
             if profile:
-                if profile.corpus.split_unit == "speaker" and not speaker and not training_only:
+                # Fixed held-out evaluation may legitimately contain rows whose source catalog marked
+                # them training_only only because the source lacks stable speaker IDs. A fixed split
+                # is stronger than that hint and therefore must not force such rows back into train.
+                if (
+                    profile.corpus.split_unit == "speaker"
+                    and not speaker
+                    and not training_only
+                    and args.fixed_split is None
+                ):
                     reasons.append("missing_speaker")
                 if profile.corpus.require_consent and not _governance_ok(
                     consent_attested=consent_attested,
@@ -175,12 +207,13 @@ def main() -> None:
 
             seen_hashes.add(digest)
             char_counter.update(text)
-            if training_only:
-                split = "train"
-            else:
-                split_key = speaker if profile and profile.corpus.split_unit == "speaker" else digest
-                assert split_key is not None
-                split = stable_partition(split_key)
+            split = _assign_split(
+                fixed_split=args.fixed_split,
+                training_only=training_only,
+                speaker=speaker,
+                digest=digest,
+                profile=profile,
+            )
             record = SpeechRecord(
                 audio_filepath=str(audio_path),
                 text=text,
@@ -215,6 +248,7 @@ def main() -> None:
         "accepted": len(accepted),
         "rejected": len(rejected),
         "split_unit": profile.corpus.split_unit if profile else "audio",
+        "fixed_split": args.fixed_split,
         "training_only": sum(1 for record in accepted if record.training_only),
         "characters": [
             {"char": char, "count": count} for char, count in char_counter.most_common()
@@ -224,7 +258,13 @@ def main() -> None:
         json.dumps(inventory, ensure_ascii=False, indent=2), encoding="utf-8"
     )
     quality_report = build_quality_report(accepted).as_dict()
-    quality_report.update({"language": language, "rejected": len(rejected)})
+    quality_report.update(
+        {
+            "language": language,
+            "rejected": len(rejected),
+            "fixed_split": args.fixed_split,
+        }
+    )
     (args.output / "quality_report.json").write_text(
         json.dumps(quality_report, ensure_ascii=False, indent=2), encoding="utf-8"
     )
@@ -236,6 +276,7 @@ def main() -> None:
         "fingerprint_sha256": fingerprint,
         "profile": str(args.profile) if args.profile else None,
         "profile_sha256": profile_hash,
+        "fixed_split": args.fixed_split,
         "accepted": len(accepted),
         "hours": quality_report["hours"],
         "source_revisions": sorted(
@@ -248,7 +289,12 @@ def main() -> None:
     (args.output / "dataset_version.json").write_text(
         json.dumps(dataset_version, ensure_ascii=False, indent=2), encoding="utf-8"
     )
-    if profile and profile.corpus.split_unit == "speaker" and quality_report["speaker_leakage"]:
+    if (
+        args.fixed_split is None
+        and profile
+        and profile.corpus.split_unit == "speaker"
+        and quality_report["speaker_leakage"]
+    ):
         raise SystemExit("speaker leakage detected despite speaker-disjoint split policy")
     print(json.dumps(quality_report, indent=2))
 
