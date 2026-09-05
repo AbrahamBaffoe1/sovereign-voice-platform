@@ -28,8 +28,8 @@ languages:
     normalizer: twi
     asr:
       mode: custom
-      model_kind: local
-      model: models/asr/tw
+      model_kind: registry
+      model: models/deployments/asr/tw/production.json
       runtime_language_hint: null
       deployment_required: true
     nemo:
@@ -45,8 +45,8 @@ languages:
     normalizer: ewe
     asr:
       mode: custom
-      model_kind: local
-      model: models/asr/ee
+      model_kind: registry
+      model: models/deployments/asr/ee/production.json
       runtime_language_hint: null
       deployment_required: true
     nemo:
@@ -62,8 +62,8 @@ languages:
     normalizer: ga
     asr:
       mode: custom
-      model_kind: local
-      model: models/asr/gaa
+      model_kind: registry
+      model: models/deployments/asr/gaa/production.json
       runtime_language_hint: null
       deployment_required: true
     nemo:
@@ -79,8 +79,8 @@ languages:
     normalizer: hausa
     asr:
       mode: custom
-      model_kind: local
-      model: models/asr/ha
+      model_kind: registry
+      model: models/deployments/asr/ha/production.json
       runtime_language_hint: null
       deployment_required: true
     nemo:

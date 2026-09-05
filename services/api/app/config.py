@@ -45,13 +45,18 @@ class Settings(BaseSettings):
     llm_max_tokens: int = Field(default=512, ge=32, le=8192)
     llm_temperature: float = Field(default=0.35, ge=0.0, le=2.0)
 
-    default_tts_engine: Literal["chatterbox", "nemo"] = "chatterbox"
+    default_tts_engine: Literal["chatterbox", "nemo", "voxcpm"] = "chatterbox"
     chatterbox_device: str = "auto"
     chatterbox_model: str = "v3"
     nemo_device: str = "auto"
+    voxcpm_device: str = "auto"
+    voxcpm_cfg_value: float = Field(default=2.0, ge=0.1, le=10.0)
+    voxcpm_inference_timesteps: int = Field(default=10, ge=1, le=50)
 
     max_upload_mb: int = Field(default=30, ge=1, le=500)
     max_ws_audio_seconds: int = Field(default=90, ge=5, le=600)
+    max_corpus_clip_seconds: float = Field(default=60.0, ge=1.0, le=600.0)
+    max_corpus_recording_seconds: float = Field(default=1800.0, ge=30.0, le=7200.0)
     default_sample_rate: int = Field(default=16000, ge=8000, le=48000)
 
     @property
@@ -69,4 +74,5 @@ def get_settings() -> Settings:
     settings.data_dir.mkdir(parents=True, exist_ok=True)
     settings.model_dir.mkdir(parents=True, exist_ok=True)
     (settings.data_dir / "voices").mkdir(parents=True, exist_ok=True)
+    (settings.data_dir / "corpus").mkdir(parents=True, exist_ok=True)
     return settings

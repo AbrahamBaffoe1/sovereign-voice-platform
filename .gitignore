@@ -16,3 +16,5 @@ wandb/
 # Raw corpus audio is data, not source code. Commit metadata/policy only.
 datasets/*/wavs/*
 !datasets/*/wavs/.gitkeep
+sdk/typescript/dist/
+sdk/typescript/node_modules/

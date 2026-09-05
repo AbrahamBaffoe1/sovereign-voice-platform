@@ -25,6 +25,16 @@ class InvalidAudioError(VoicePlatformError):
     pass
 
 
+class InvalidRequestError(VoicePlatformError, ValueError):
+    """Raised when caller-provided domain data is well-formed at transport level but violates a business rule."""
+    pass
+
+
+class ConflictError(VoicePlatformError, ValueError):
+    """Raised when a valid request conflicts with current durable state, such as a duplicate corpus item or stale review transition."""
+    pass
+
+
 class ResourceNotFoundError(VoicePlatformError):
     """Raised when a caller references a local resource such as a voice profile that does not exist."""
     pass

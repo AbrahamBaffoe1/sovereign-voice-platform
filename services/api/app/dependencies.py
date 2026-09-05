@@ -9,6 +9,7 @@ from app.engines.llm.openai_compatible import OpenAICompatibleLocalLLM
 from app.normalization.registry import NormalizerRegistry
 from app.orchestration.pipeline import VoicePipeline
 from app.services.asr_router import ASRRouter
+from app.services.corpus_store import CorpusStore
 from app.services.language_registry import LanguageRegistry
 from app.services.tts_router import TTSRouter
 from app.services.voice_registry import VoiceRegistry
@@ -21,6 +22,7 @@ class Container:
     settings: Settings
     languages: LanguageRegistry
     voices: VoiceRegistry
+    corpus: CorpusStore
     normalizers: NormalizerRegistry
     asr: ASRRouter
     llm: OpenAICompatibleLocalLLM | None
@@ -33,6 +35,7 @@ def build_container(settings: Settings | None = None) -> Container:
     settings = settings or get_settings()
     languages = LanguageRegistry(settings.language_config)
     voices = VoiceRegistry(settings.data_dir / "voices")
+    corpus = CorpusStore(settings.data_dir / "corpus")
     normalizers = NormalizerRegistry()
     asr = ASRRouter(settings, languages)
     llm = OpenAICompatibleLocalLLM(settings) if settings.llm_enabled else None
@@ -46,4 +49,4 @@ def build_container(settings: Settings | None = None) -> Container:
         normalizers=normalizers,
         voices=voices,
     )
-    return Container(settings, languages, voices, normalizers, asr, llm, tts, pipeline)
+    return Container(settings, languages, voices, corpus, normalizers, asr, llm, tts, pipeline)

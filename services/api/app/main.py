@@ -4,10 +4,11 @@ from __future__ import annotations
 
 from contextlib import asynccontextmanager
 
-from fastapi import Depends, FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Request
 from fastapi.responses import ORJSONResponse, PlainTextResponse
 from prometheus_client import CONTENT_TYPE_LATEST, Counter, Histogram, generate_latest
 
+from app.api.routes.corpus import router as corpus_router
 from app.api.routes.health import router as health_router
 from app.api.routes.languages import router as languages_router
 from app.api.routes.speech import router as speech_router
@@ -16,14 +17,17 @@ from app.api.ws.conversation import router as conversation_router
 from app.config import get_settings
 from app.core.errors import (
     ConfigurationError,
+    ConflictError,
     EngineUnavailableError,
     InvalidAudioError,
+    InvalidRequestError,
     ModelInferenceError,
     ResourceNotFoundError,
     UnsupportedLanguageError,
     VoicePlatformError,
 )
 from app.core.logging import configure_logging
+from app.core.metrics import refresh_gpu_metrics
 from app.core.security import require_api_key
 from app.dependencies import build_container
 
@@ -72,6 +76,10 @@ async def platform_error_handler(_: Request, exc: VoicePlatformError):
     status_code = 422
     if isinstance(exc, InvalidAudioError):
         status_code = 400
+    elif isinstance(exc, ConflictError):
+        status_code = 409
+    elif isinstance(exc, InvalidRequestError):
+        status_code = 422
     elif isinstance(exc, ResourceNotFoundError):
         status_code = 404
     elif isinstance(exc, EngineUnavailableError):
@@ -92,12 +100,14 @@ async def platform_error_handler(_: Request, exc: VoicePlatformError):
 async def metrics() -> PlainTextResponse:
     """Expose Prometheus text-format metrics without ORJSON encoding so a scraper receives the
     canonical content type and payload."""
+    refresh_gpu_metrics()
     return PlainTextResponse(generate_latest().decode(), media_type=CONTENT_TYPE_LATEST)
 
 
 app.include_router(health_router)
 protected = [Depends(require_api_key(settings))]
 app.include_router(languages_router, dependencies=protected)
+app.include_router(corpus_router, dependencies=protected)
 app.include_router(speech_router, dependencies=protected)
 app.include_router(voices_router, dependencies=protected)
 app.include_router(conversation_router)
