@@ -14,10 +14,10 @@ languages:
       train: [ga_words_90k]
   ee:
     asr:
-      train: [waxal_ewe_asr, ewe_navigation_speech]
+      train: [waxal_ewe_asr]
       eval: [waxal_ewe_eval]
     tts:
-      train: [waxal_ewe_tts, ewe_navigation_speech]
+      train: [waxal_ewe_tts]
   ha:
     asr:
       train: [hausa_commonvoice_derived]

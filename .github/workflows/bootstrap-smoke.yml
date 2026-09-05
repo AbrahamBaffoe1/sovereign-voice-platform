@@ -45,7 +45,7 @@ jobs:
         env:
           HF_TOKEN: ${{ secrets.HF_TOKEN }}
         run: >-
-          python -m training.data.acquire
+          python -m training.data.acquire_worker
           --language '${{ matrix.language }}'
           --task '${{ matrix.task }}'
           --max-samples 1

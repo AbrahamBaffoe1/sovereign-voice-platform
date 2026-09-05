@@ -1,30 +1,24 @@
-"""End-to-end bootstrap command: acquire approved public data, compile it, and freeze corpus-v0 artifacts."""
+"""End-to-end bootstrap command: acquire approved public data, compile it, and freeze corpus-v0."""
 
 from __future__ import annotations
 
 import argparse
 import json
-import os
 import subprocess
+import sys
 from pathlib import Path
 
-from training.data.acquire import acquire_language, dry_run_plan
+from training.data.acquire import dry_run_plan
 from training.data.bootstrap_plan import BootstrapPlan
 from training.data.catalog import SourceCatalog
 
 
-def _compile(
-    *,
-    language: str,
-    task: str,
-    metadata: Path,
-    artifacts_root: Path,
-) -> Path:
-    """Invoke the same strict corpus compiler used for first-party data; only governance inputs differ."""
+def _compile(*, language: str, task: str, metadata: Path, artifacts_root: Path) -> Path:
+    """Run the same strict corpus compiler used for first-party data; only governance inputs differ."""
     profile = Path("training/configs/languages") / f"{language}.yaml"
     output = artifacts_root / language / task / "corpus-v0"
     command = [
-        "python",
+        sys.executable,
         "-m",
         "training.prepare_dataset",
         "--profile",
@@ -40,6 +34,49 @@ def _compile(
     ]
     subprocess.run(command, check=True)
     return output
+
+
+def _acquire_in_worker(
+    *,
+    language: str,
+    task: str,
+    catalog: Path,
+    plan: Path,
+    data_root: Path,
+    include_eval: bool,
+    max_samples: int | None,
+    refresh_lock: bool,
+) -> dict[str, object]:
+    """Run provider libraries in a disposable process, then read their durable summary from disk."""
+    command = [
+        sys.executable,
+        "-m",
+        "training.data.acquire_worker",
+        "--language",
+        language,
+        "--task",
+        task,
+        "--catalog",
+        str(catalog),
+        "--plan",
+        str(plan),
+        "--output-root",
+        str(data_root),
+    ]
+    if include_eval:
+        command.append("--include-eval")
+    if max_samples is not None:
+        command.extend(["--max-samples", str(max_samples)])
+    if refresh_lock:
+        command.append("--refresh-lock")
+    subprocess.run(command, check=True)
+    summary_path = data_root / language / task / "ACQUISITION_SUMMARY.json"
+    if not summary_path.exists():
+        raise RuntimeError(f"acquisition worker exited without summary: {summary_path}")
+    payload = json.loads(summary_path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"invalid acquisition summary: {summary_path}")
+    return payload
 
 
 def main() -> None:
@@ -61,10 +98,13 @@ def main() -> None:
     catalog = SourceCatalog(args.catalog)
     plan = BootstrapPlan(args.plan)
     report: dict[str, object] = {"runs": []}
+    runs = report["runs"]
+    assert isinstance(runs, list)
+
     for language in languages:
         for task in tasks:
             if args.dry_run:
-                report["runs"].append(
+                runs.append(
                     {
                         "language": language,
                         "task": task,
@@ -78,16 +118,15 @@ def main() -> None:
                     }
                 )
                 continue
-            summary = acquire_language(
+            summary = _acquire_in_worker(
                 language=language,
                 task=task,
-                catalog_path=args.catalog,
-                plan_path=args.plan,
-                output_root=args.data_root,
+                catalog=args.catalog,
+                plan=args.plan,
+                data_root=args.data_root,
                 include_eval=args.include_eval,
                 max_samples=args.max_samples,
                 refresh_lock=args.refresh_lock,
-                token=os.environ.get("HF_TOKEN") or None,
             )
             metadata_value = summary.get("train_metadata")
             if not metadata_value:
@@ -98,7 +137,7 @@ def main() -> None:
                 metadata=Path(str(metadata_value)),
                 artifacts_root=args.artifacts_root,
             )
-            report["runs"].append(
+            runs.append(
                 {
                     "language": language,
                     "task": task,

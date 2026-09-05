@@ -25,7 +25,7 @@ sources:
     governance_approved: true
     upstream_validated: true
     fields: {audio: audio, text: transcription, speaker: speaker_id, id: id, dialect: language}
-    notes: University of Ghana WAXAL Akan natural speech; build the bootstrap model from the train split only.
+    notes: University of Ghana WAXAL Akan natural speech; bootstrap training uses the train split only.
 
   waxal_akan_eval:
     provider: huggingface
@@ -63,7 +63,7 @@ sources:
   twi_words_400k:
     provider: huggingface
     repo_id: michsethowusu/twi-words-speech-text-parallel-400k
-    revision: null
+    revision: e808e3c75f31d306b33f7adb79a22f5aa3ea28f1
     config: default
     split: train
     languages: [tw]
@@ -80,7 +80,7 @@ sources:
   ga_words_90k:
     provider: huggingface
     repo_id: ghananlpcommunity/ga-speech-text-parallel-90k
-    revision: null
+    revision: cb9d64470b5c98475a74c613cd122ea3a9780ba0
     config: default
     split: train
     languages: [gaa]
@@ -110,7 +110,7 @@ sources:
     gated: true
     optional: true
     fields: {audio: audio, text: text, speaker: speaker_id, id: id}
-    notes: 8.8h/81-speaker CDLI Ga standard speech; held out and gated by dataset terms.
+    notes: 8.8h/81-speaker CDLI Ga standard speech; held out and gated by upstream dataset terms.
 
   waxal_ewe_asr:
     provider: huggingface
@@ -143,7 +143,7 @@ sources:
     upstream_validated: true
     optional: true
     fields: {audio: audio, text: transcription, speaker: speaker_id, id: id, dialect: language}
-    notes: Upstream WAXAL Ewe test split reserved from our bootstrap train data.
+    notes: Upstream WAXAL Ewe test split reserved from bootstrap train data.
 
   waxal_ewe_tts:
     provider: huggingface
@@ -161,27 +161,27 @@ sources:
     fields: {audio: audio, text: text, speaker: speaker_id, id: id, dialect: locale}
     notes: University of Ghana WAXAL Ewe TTS data.
 
-  ewe_navigation_speech:
+  ewe_navigation_research:
     provider: huggingface
-    repo_id: ghananlpcommunity/navigation-corpus-speech-full-ewe
+    repo_id: ghanaopendata/navigation-corpus-speech-full-ewe
     revision: null
     config: default
     split: train
     languages: [ee]
     tasks: [asr, tts]
-    usage: production
-    license: CC-BY-4.0
+    usage: research
+    license: CC-BY-NC-4.0
     requires_revision_pin: true
-    governance_approved: true
+    governance_approved: false
     upstream_validated: true
     training_only: true
-    fields: {audio: audio, text: text}
-    notes: Navigation-domain Ewe speech; train-only domain augmentation.
+    fields: {audio: audio, text: transcription, id: id, dialect: language}
+    notes: Clean navigation speech but current upstream license is non-commercial; excluded from production corpus-v0.
 
   hausa_commonvoice_derived:
     provider: huggingface
     repo_id: mide7x/hausa_voice_dataset
-    revision: null
+    revision: 30203d82683eaa4557a454a0341824359a03827e
     config: default
     split: train
     languages: [ha]
@@ -260,7 +260,7 @@ sources:
     upstream_validated: true
     optional: true
     fields: {audio: audio, text: text, id: subset, dialect: language}
-    notes: Explicit evaluation-only Ghana benchmark; retained in catalog for future per-config benchmark imports.
+    notes: Explicit evaluation-only Ghana benchmark; retained for later per-config benchmark imports.
 
   kasa42_research:
     provider: external
