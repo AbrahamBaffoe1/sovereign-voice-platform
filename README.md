@@ -1,49 +1,25 @@
 # Sovereign Voice Platform
 
-Self-hosted speech platform for ASR → optional local LLM → multilingual/custom-language TTS.
+Self-hosted `ASR -> optional LLM -> TTS` for English plus custom Twi, Ga, Ewe and Hausa models.
+
+## Runtime
 
 ```text
-Microphone / audio file
-        ↓
-Faster-Whisper (ASR)
-        ↓
-Local OpenAI-compatible LLM (optional)
-        ↓
-Language Router + Text Normalizer
-        ↓
-Chatterbox V3 OR custom NeMo FastPitch + HiFi-GAN
-        ↓
-WAV / PCM
+microphone/audio
+    -> ASRRouter
+       -> shared Faster-Whisper for generic discovery
+       -> custom CTranslate2 checkpoint for tw / gaa / ee / ha
+    -> local OpenAI-compatible LLM (optional)
+    -> language normalizer
+    -> TTSRouter
+       -> Chatterbox for configured native languages
+       -> NeMo FastPitch + HiFi-GAN for custom languages
+    -> WAV
 ```
 
-## Architecture
+Custom-language routes are strict. If a Twi/Ga/Ewe/Hausa checkpoint is missing, the API returns a deployment error instead of quietly using the wrong model.
 
-The API is deliberately separated from model implementations. FastAPI owns HTTP/WebSocket transport; orchestration depends on ASR/LLM/TTS interfaces; model adapters own loading and inference; language configuration chooses normalizers and TTS backends. Heavy models load lazily and inference runs outside the event loop.
-
-Repository layout:
-
-```text
-services/api/app/
-  api/routes/           HTTP endpoints
-  api/ws/               WebSocket voice-turn protocol
-  engines/asr/          Faster-Whisper adapter
-  engines/llm/          local OpenAI-compatible LLM adapter
-  engines/tts/          Chatterbox + NeMo adapters
-  normalization/        language-safe text normalization
-  orchestration/        ASR -> LLM -> TTS pipeline
-  services/             audio, voices, language registry, routing
-training/
-  common/               manifests + audio quality checks
-  asr/                  Whisper fine-tuning/evaluation/export
-  tts/                  NeMo FastPitch / HiFi-GAN launchers
-  configs/languages/    reviewed language inventories
-config/languages.yaml   runtime language routing
-tests/                   regression/unit tests
-docs/                    architecture and WebSocket protocol
-examples/                HTTP/WebSocket clients
-```
-
-## Development
+## Setup
 
 ```bash
 cp .env.example .env
@@ -54,117 +30,80 @@ pip install -e '.[asr,dev]'
 make run
 ```
 
-Health check:
-
-```bash
-curl http://127.0.0.1:8080/healthz
-```
-
-Run validation:
-
-```bash
-make validate
-make test
-make lint
-```
-
-## TTS
-
-Install Chatterbox for languages it natively supports:
+Optional model dependencies:
 
 ```bash
 pip install -e '.[tts-chatterbox]'
+pip install -e '.[tts-nemo]'
+pip install -e '.[training,training-asr]'
 ```
 
-Example:
+## Target language codes
+
+| Language | Canonical code | Accepted aliases |
+|---|---|---|
+| Twi | `tw` | `twi`, `akan-twi` |
+| Ga | `gaa` | `ga` |
+| Ewe | `ee` | `ewe` |
+| Hausa | `ha` | `hausa` |
+
+Runtime routing: `config/languages.yaml`  
+Training policy: `training/configs/languages/*.yaml`
+
+Check deployment readiness without loading models:
 
 ```bash
-curl -X POST http://127.0.0.1:8080/v1/speech \
-  -H 'Content-Type: application/json' \
-  -d '{"text":"Hello from my own voice server.","language":"en"}' \
-  --output hello.wav
+curl http://127.0.0.1:8080/v1/languages
 ```
 
-Custom languages use NeMo FastPitch + HiFi-GAN checkpoints. For Twi the runtime expects:
+## Corpus workflow
+
+Strict workspaces live under `datasets/tw`, `datasets/gaa`, `datasets/ee`, and `datasets/ha`. CSV schema:
 
 ```text
-models/twi/fastpitch.nemo
-models/twi/hifigan.nemo
+audio,text,speaker,dialect,source_id,consent_attested,transcript_reviewed
 ```
 
-Do not point Twi/Ewe/Ga routes at English checkpoints merely to make them return audio. The tokenizer and pronunciation frontend must be reviewed for that language.
-
-## Local LLM
-
-The dialogue adapter expects an OpenAI-compatible `/v1/chat/completions` server, so vLLM, llama.cpp, or another compatible local server can be swapped without rewriting the voice pipeline.
-
-```env
-VOICE_LLM_BASE_URL=http://127.0.0.1:8001/v1
-VOICE_LLM_MODEL=your-local-model
-```
-
-Disable the LLM to run ASR → TTS echo mode:
-
-```env
-VOICE_LLM_ENABLED=false
-```
-
-## WebSocket voice turns
-
-Endpoint:
-
-```text
-ws://127.0.0.1:8080/v1/conversation
-```
-
-Send a JSON `start` frame, then mono PCM16 little-endian binary chunks, then `{"type":"commit"}`. The server returns transcript/response metadata followed by WAV bytes and `audio_end`. See `docs/WEBSOCKET_PROTOCOL.md` for the exact protocol.
-
-## Dataset preparation
-
-Expected CSV:
-
-```csv
-audio,text,speaker
-001.wav,"Maakye, wo ho te sɛn?",spk01
-002.wav,"Me ho yɛ, meda wo ase.",spk01
-```
-
-Compile and audit a corpus:
+Compile a corpus:
 
 ```bash
-pip install -e '.[training]'
 python -m training.prepare_dataset \
-  --csv datasets/twi/metadata.csv \
-  --audio-root datasets/twi/wavs \
-  --output artifacts/twi \
-  --language tw
+  --profile training/configs/languages/tw.yaml \
+  --csv datasets/tw/metadata.csv \
+  --audio-root datasets/tw/wavs \
+  --output artifacts/tw
 ```
 
-The compiler checks audio readability, duration, clipping, RMS, DC offset, duplicate audio, transcript normalization, deterministic train/validation/test splits, and grapheme inventory.
+The compiler enforces consent/review metadata, speaker-disjoint splits and emits `audit.jsonl`, `inventory.json`, `quality_report.json`, and `dataset_version.json`.
 
-## Whisper fine-tuning
+## ASR training
 
 ```bash
-pip install -e '.[training-asr]'
 python -m training.asr.finetune_whisper \
-  --train artifacts/twi/train.json \
-  --validation artifacts/twi/validation.json \
-  --output checkpoints/whisper-twi \
-  --decoder-language <reviewed-token> \
+  --profile training/configs/languages/tw.yaml \
+  --train artifacts/tw/train.json \
+  --validation artifacts/tw/validation.json \
+  --output checkpoints/whisper-tw \
   --fp16
 ```
 
-Evaluate the final model on a frozen held-out set and convert the chosen checkpoint to CTranslate2 before deploying it through Faster-Whisper.
+Profiles currently use token-free low-resource experiments rather than inventing unsupported Whisper language tokens.
 
-## Custom TTS training
-
-Before FastPitch training: review the corpus inventory, freeze the grapheme/phoneme policy, define an explicit tokenizer, audit every transcript against it, then train the acoustic model and vocoder. The FastPitch launcher intentionally refuses configurations without an explicit tokenizer.
+## TTS training gate
 
 ```bash
-python -m training.tts.train_fastpitch --config path/to/reviewed-fastpitch.yaml --output checkpoints/twi-fastpitch
-python -m training.tts.train_hifigan --config path/to/reviewed-hifigan.yaml --output checkpoints/twi-hifigan
+python -m training.tts.preflight \
+  --profile training/configs/languages/tw.yaml \
+  --artifacts artifacts/tw
 ```
 
-## Before production exposure
+It intentionally fails until native-speaker/linguist review approves the grapheme/tokenizer policy.
 
-Put the service behind TLS and an authenticated gateway; add tenant-aware rate limits; profile GPU concurrency; version checkpoints immutably; establish rollback; run native-speaker ASR/TTS evaluation; and load-test WebSocket/API behavior. `INTERN_TODOS.md` contains only delegated work that still requires human corpus, linguistic, evaluation, or deployment review.
+## Validation
+
+```bash
+python -m compileall -q services training tests
+pytest -q
+```
+
+Current execution plan: `docs/EXECUTION_BACKLOG.md`.

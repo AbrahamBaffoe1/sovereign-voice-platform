@@ -1,7 +1,0 @@
-code: ee
-name: Ewe
-script: Latin
-normalization: NFC
-# TODO(intern-linguistics): populate only after extracting the corpus inventory and
-# native-speaker review. Do not copy another language's alphabet.
-alphabet: ""

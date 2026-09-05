@@ -1,40 +1,17 @@
-"""Orthography-preserving Twi normalization that avoids inventing unreviewed pronunciation rules."""
+"""Orthography-preserving Twi normalization with reviewed-rule expansion intentionally gated."""
 
 from __future__ import annotations
 
-import unicodedata
-
-from app.normalization.generic import GenericNormalizer
-
-_ALLOWED_NONLETTERS = set(" -’'.,;:!?₵$%()/:\"")
+from app.normalization.orthography import OrthographyPreservingNormalizer
 
 
-class TwiNormalizer(GenericNormalizer):
-    """Conservative, orthography-preserving Twi normalization.
+class TwiNormalizer(OrthographyPreservingNormalizer):
+    """Preserve Twi/Akan spelling exactly while the pronunciation rule set is being reviewed.
 
-    We preserve every Unicode letter rather than maintaining an unreviewed alphabet
-    in application code. This protects Twi graphemes, personal names, diacritics and
-    code-switched words. The training pipeline separately audits the actual corpus
-    inventory before a TTS tokenizer is frozen.
+    The shared Unicode normalizer already protects Twi letters, diacritics, names and code-switched
+    text. Future number/date/currency expansion must be added here only after native-speaker golden
+    tests exist; otherwise apparently helpful normalization can permanently poison TTS training data.
     """
 
-    def normalize(self, text: str) -> str:
-        """Preserve Twi letters, combining marks, numbers, and approved punctuation while replacing
-        unsupported symbols with spaces. Final generic normalization cleans the resulting spacing
-        without anglicizing the text."""
-        value = unicodedata.normalize("NFC", text)
-        value = value.replace("“", '"').replace("”", '"').replace("‘", "’")
-        kept: list[str] = []
-        for char in value:
-            category = unicodedata.category(char)
-            if category.startswith("L") or category.startswith("M") or category.startswith("N"):
-                kept.append(char)
-            elif char.isspace() or char in _ALLOWED_NONLETTERS:
-                kept.append(char)
-            else:
-                kept.append(" ")
-        return super().normalize("".join(kept))
-
-        # TODO(intern-linguistics): Implement native-speaker-reviewed expansion for
-        # cardinal/ordinal numbers, dates, time, GH₵ currency, abbreviations and
-        # code-switching. Add golden pronunciation tests before enabling any rule.
+    # TODO(language-tw): Add native-speaker-reviewed expansions for numbers, dates, time, GH₵,
+    # abbreviations and code-switching. Every rule needs text->spoken-form golden tests first.

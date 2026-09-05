@@ -13,3 +13,6 @@ data/voices/*
 artifacts/
 checkpoints/
 wandb/
+# Raw corpus audio is data, not source code. Commit metadata/policy only.
+datasets/*/wavs/*
+!datasets/*/wavs/.gitkeep

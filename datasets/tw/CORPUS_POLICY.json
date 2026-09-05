@@ -1,0 +1,13 @@
+{
+  "language": "tw",
+  "name": "Twi (Akan)",
+  "iso639_3": "twi",
+  "script": "Latin",
+  "required_metadata": ["speaker", "dialect", "source_id", "consent_attested", "transcript_reviewed"],
+  "require_consent": true,
+  "require_reviewed_transcript": true,
+  "split_unit": "speaker",
+  "duration_seconds": {"min": 0.5, "max": 20.0},
+  "profile": "training/configs/languages/tw.yaml",
+  "note": "Do not mark transcript_reviewed=true until a human reviewer has checked the recording against the transcript. Do not mark consent_attested=true without collection evidence."
+}

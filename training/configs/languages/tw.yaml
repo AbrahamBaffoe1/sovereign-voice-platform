@@ -1,0 +1,27 @@
+schema_version: 1
+language:
+  code: tw
+  iso639_3: twi
+  name: Twi (Akan)
+  aliases: [twi, akan-twi]
+  script: Latin
+  runtime_normalizer: twi
+corpus:
+  min_seconds: 0.5
+  max_seconds: 20.0
+  require_mono: true
+  split_unit: speaker
+  required_metadata: [speaker, dialect, source_id, consent_attested, transcript_reviewed]
+  require_consent: true
+  require_reviewed_transcript: true
+asr:
+  base_model: openai/whisper-small
+  language_token_mode: none
+  decoder_language: null
+  sample_rate: 16000
+tts:
+  sample_rate: 22050
+  frontend: experiment
+  tokenizer_reviewed: false
+  g2p_reviewed: false
+reviewed_graphemes: null

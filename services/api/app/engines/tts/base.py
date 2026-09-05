@@ -8,8 +8,9 @@ from app.domain.models import VoiceProfile
 
 
 class TTSEngine(ABC):
+    """Interface boundary that keeps TTS routing independent of Chatterbox or NeMo internals."""
+
     @abstractmethod
-    """Interface boundary for every synthesis backend used by the router."""
     async def synthesize(
         self,
         text: str,
@@ -18,5 +19,5 @@ class TTSEngine(ABC):
         voice: VoiceProfile | None = None,
         pace: float = 1.0,
     ) -> tuple[bytes, int]:
-        """Return WAV bytes and sample rate."""
+        """Synthesize normalized text and return WAV bytes plus the waveform sample rate."""
         raise NotImplementedError

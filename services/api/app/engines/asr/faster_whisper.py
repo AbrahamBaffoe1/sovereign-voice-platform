@@ -15,23 +15,27 @@ from app.engines.asr.base import ASREngine
 
 
 class FasterWhisperEngine(ASREngine):
-    """Production adapter around Faster-Whisper. Model construction is lazy and inference is serialized
-    by default to avoid uncontrolled concurrent GPU memory pressure."""
-    def __init__(self, settings: Settings) -> None:
-        """Capture deployment settings, wrap model construction in AsyncLazy, and create the inference
-        semaphore that protects a single model instance."""
+    """Production adapter around one Faster-Whisper checkpoint.
+
+    A process may host several instances of this class when different languages have their own
+    fine-tuned CTranslate2 checkpoints. Each instance still loads lazily, so merely configuring four
+    languages does not allocate four models into GPU memory at startup.
+    """
+
+    def __init__(self, settings: Settings, *, model_name: str | None = None) -> None:
+        """Capture deployment settings and the checkpoint identifier owned by this engine instance."""
         self.settings = settings
+        self.model_name = model_name or settings.asr_model
         self._model = AsyncLazy(self._load_model)
         self._inference_lock = asyncio.Semaphore(1)
 
     @property
     def model_loaded(self) -> bool:
-        """Expose lazy-load state for readiness diagnostics without allocating model memory."""
+        """Expose lazy-load state for readiness diagnostics without touching model weights."""
         return self._model.loaded
 
     async def _load_model(self) -> Any:
-        """Import the optional Faster-Whisper dependency only when ASR is first used, choose the
-        configured device/compute mode, and load the model off the event loop."""
+        """Import Faster-Whisper only on first use and deserialize this instance's checkpoint off-loop."""
         try:
             from faster_whisper import WhisperModel
         except ImportError as exc:
@@ -40,10 +44,9 @@ class FasterWhisperEngine(ASREngine):
             ) from exc
 
         def load() -> Any:
-            """Construct the synchronous WhisperModel object inside a worker thread so model
-            download/deserialization does not block FastAPI event processing."""
+            """Construct the synchronous model in a worker thread so startup does not block FastAPI."""
             return WhisperModel(
-                self.settings.asr_model,
+                self.model_name,
                 device=self.settings.asr_device,
                 compute_type=self.settings.asr_compute_type,
             )
@@ -58,14 +61,11 @@ class FasterWhisperEngine(ASREngine):
         hotwords: str | None = None,
         word_timestamps: bool = False,
     ) -> TranscriptionResult:
-        """Materialize the model, stage request bytes in a temporary file for the decoder, run blocking
-        recognition outside the event loop, map segments into engine-neutral models, and always
-        delete the temporary file."""
+        """Decode one request and convert model-specific segments into the platform result contract."""
         model = await self._model.get()
 
         def infer(path: str) -> TranscriptionResult:
-            """Execute the synchronous Faster-Whisper call and collapse lazy segment generators into
-            text plus optional per-word timestamps while model metadata is still available."""
+            """Run synchronous CTranslate2 inference and consume the lazy segment iterator completely."""
             segments, info = model.transcribe(
                 path,
                 language=language,
@@ -85,7 +85,9 @@ class FasterWhisperEngine(ASREngine):
                             word=word.word,
                             start=float(word.start),
                             end=float(word.end),
-                            probability=(float(word.probability) if word.probability is not None else None),
+                            probability=(
+                                float(word.probability) if word.probability is not None else None
+                            ),
                         )
                         for word in segment.words
                     )
@@ -97,10 +99,9 @@ class FasterWhisperEngine(ASREngine):
                 words=words,
             )
 
-        suffix = ".audio"
         path: Path | None = None
         try:
-            with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
+            with tempfile.NamedTemporaryFile(suffix=".audio", delete=False) as tmp:
                 tmp.write(audio_bytes)
                 path = Path(tmp.name)
             async with self._inference_lock:
@@ -108,7 +109,7 @@ class FasterWhisperEngine(ASREngine):
         except Exception as exc:
             if isinstance(exc, EngineUnavailableError):
                 raise
-            raise ModelInferenceError(f"ASR inference failed: {exc}") from exc
+            raise ModelInferenceError(f"ASR inference failed for {self.model_name!r}: {exc}") from exc
         finally:
             if path:
                 path.unlink(missing_ok=True)

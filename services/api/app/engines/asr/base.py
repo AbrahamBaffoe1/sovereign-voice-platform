@@ -8,9 +8,9 @@ from app.domain.models import TranscriptionResult
 
 
 class ASREngine(ABC):
+    """Interface boundary for speech recognition used by orchestration and routing code."""
+
     @abstractmethod
-    """Interface boundary for speech recognition. The pipeline depends on this contract so
-    Faster-Whisper can be replaced or mocked without changing application logic."""
     async def transcribe(
         self,
         audio_bytes: bytes,
@@ -19,6 +19,9 @@ class ASREngine(ABC):
         hotwords: str | None = None,
         word_timestamps: bool = False,
     ) -> TranscriptionResult:
-        """Convert encoded audio bytes into normalized transcription metadata. Implementations own
-        decoding, model execution, and model-specific error translation."""
+        """Convert encoded audio bytes into normalized transcription metadata.
+
+        Implementations own decoding, model execution, and model-specific error translation so the
+        rest of the application never depends directly on Faster-Whisper or another ASR library.
+        """
         raise NotImplementedError

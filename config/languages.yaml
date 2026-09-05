@@ -1,35 +1,89 @@
 languages:
   en:
     name: English
+    iso639_3: eng
+    aliases: [english]
     tts_engine: chatterbox
     tts_language_id: en
     normalizer: generic
+    asr:
+      mode: shared
+      runtime_language_hint: en
   sw:
     name: Swahili
+    iso639_3: swa
+    aliases: [swahili]
     tts_engine: chatterbox
     tts_language_id: sw
     normalizer: generic
+    asr:
+      mode: shared
+      runtime_language_hint: sw
   tw:
-    name: Twi
+    name: Twi (Akan)
+    iso639_3: twi
+    aliases: [twi, akan-twi]
+    training_profile: training/configs/languages/tw.yaml
     tts_engine: nemo
     normalizer: twi
+    asr:
+      mode: custom
+      model_kind: local
+      model: models/asr/tw
+      runtime_language_hint: null
+      deployment_required: true
     nemo:
       fastpitch_checkpoint: models/twi/fastpitch.nemo
       hifigan_checkpoint: models/twi/hifigan.nemo
       sample_rate: 22050
   ee:
     name: Ewe
+    iso639_3: ewe
+    aliases: [ewe]
+    training_profile: training/configs/languages/ee.yaml
     tts_engine: nemo
-    normalizer: generic
+    normalizer: ewe
+    asr:
+      mode: custom
+      model_kind: local
+      model: models/asr/ee
+      runtime_language_hint: null
+      deployment_required: true
     nemo:
       fastpitch_checkpoint: models/ewe/fastpitch.nemo
       hifigan_checkpoint: models/ewe/hifigan.nemo
       sample_rate: 22050
   gaa:
     name: Ga
+    iso639_3: gaa
+    aliases: [ga]
+    training_profile: training/configs/languages/gaa.yaml
     tts_engine: nemo
-    normalizer: generic
+    normalizer: ga
+    asr:
+      mode: custom
+      model_kind: local
+      model: models/asr/gaa
+      runtime_language_hint: null
+      deployment_required: true
     nemo:
       fastpitch_checkpoint: models/ga/fastpitch.nemo
       hifigan_checkpoint: models/ga/hifigan.nemo
+      sample_rate: 22050
+  ha:
+    name: Hausa
+    iso639_3: hau
+    aliases: [hausa]
+    training_profile: training/configs/languages/ha.yaml
+    tts_engine: nemo
+    normalizer: hausa
+    asr:
+      mode: custom
+      model_kind: local
+      model: models/asr/ha
+      runtime_language_hint: null
+      deployment_required: true
+    nemo:
+      fastpitch_checkpoint: models/hausa/fastpitch.nemo
+      hifigan_checkpoint: models/hausa/hifigan.nemo
       sample_rate: 22050
