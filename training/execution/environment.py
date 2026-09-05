@@ -13,11 +13,11 @@ import shutil
 import socket
 import subprocess
 import sys
+from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Iterator
 
 _GIB = 1024**3
 
@@ -36,7 +36,7 @@ class WorkspaceLayout:
     cache_root: Path
 
     @classmethod
-    def from_root(cls, root: Path) -> "WorkspaceLayout":
+    def from_root(cls, root: Path) -> WorkspaceLayout:
         """Resolve one operator-owned root into paths that survive checkout cleanup and process restarts."""
         resolved = root.expanduser().resolve()
         return cls(
