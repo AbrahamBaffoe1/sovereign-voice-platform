@@ -1,25 +1,36 @@
 # Sovereign Voice Platform
 
-Self-hosted `ASR -> optional LLM -> TTS` for English plus custom Twi, Ga, Ewe and Hausa models.
+Self-hosted speech stack for **Twi (`tw`)**, **Ga (`gaa`)**, **Ewe (`ee`)**, **Hausa (`ha`)**, and configured general-purpose languages.
+
+The repository contains runtime inference, governed corpus intake, ASR/TTS training utilities, speech benchmarks, model promotion/rollback, and a TypeScript client SDK. It does not contain private training audio or model weights.
 
 ## Runtime
 
 ```text
-microphone/audio
-    -> ASRRouter
-       -> shared Faster-Whisper for generic discovery
-       -> custom CTranslate2 checkpoint for tw / gaa / ee / ha
-    -> local OpenAI-compatible LLM (optional)
-    -> language normalizer
-    -> TTSRouter
-       -> Chatterbox for configured native languages
-       -> NeMo FastPitch + HiFi-GAN for custom languages
-    -> WAV
+microphone / uploaded audio
+        |
+        v
+Faster-Whisper / promoted language ASR
+        |
+        v
+optional local OpenAI-compatible LLM
+        |
+        v
+language normalizer
+        |
+        v
+TTS router
+  |- Chatterbox for configured supported languages
+  |- NeMo FastPitch + HiFi-GAN baseline
+  `- VoxCPM2 adapted checkpoint candidate
+        |
+        v
+WAV / PCM
 ```
 
-Custom-language routes are strict. If a Twi/Ga/Ewe/Hausa checkpoint is missing, the API returns a deployment error instead of quietly using the wrong model.
+For `tw`, `gaa`, `ee`, and `ha`, custom ASR checkpoints are language-specific and must be deployed explicitly. A missing required checkpoint is an error; the runtime does not silently substitute a generic model for an explicit target-language request.
 
-## Setup
+## Install
 
 ```bash
 cp .env.example .env
@@ -30,41 +41,37 @@ pip install -e '.[asr,dev]'
 make run
 ```
 
-Optional model dependencies:
+Install only the model stacks you need:
 
 ```bash
 pip install -e '.[tts-chatterbox]'
 pip install -e '.[tts-nemo]'
+pip install -e '.[tts-voxcpm]'
 pip install -e '.[training,training-asr]'
 ```
 
-## Target language codes
+## Corpus intake
 
-| Language | Canonical code | Accepted aliases |
-|---|---|---|
-| Twi | `tw` | `twi`, `akan-twi` |
-| Ga | `gaa` | `ga` |
-| Ewe | `ee` | `ewe` |
-| Hausa | `ha` | `hausa` |
+Use `POST /v1/corpus/items` for an already-cut speech clip and `POST /v1/corpus/recordings` for a longer team recording or voice-message container. Long recordings are decoded, normalized, segmented, and placed into the same review workflow. Common phone formats can fall back to bounded `ffmpeg` decoding.
 
-Runtime routing: `config/languages.yaml`  
-Training policy: `training/configs/languages/*.yaml`
+Transcript states are:
 
-Check deployment readiness without loading models:
-
-```bash
-curl http://127.0.0.1:8080/v1/languages
+```text
+machine_draft
+    -> reviewer_1_complete
+    -> reviewer_2_complete
+    -> approved
 ```
 
-## Corpus workflow
+Rejected items remain in the audit trail. Two independent reviewer passes are required before approved export.
 
-Strict workspaces live under `datasets/tw`, `datasets/gaa`, `datasets/ee`, and `datasets/ha`. CSV schema:
+Approved data can be exported into the strict training schema:
 
 ```text
 audio,text,speaker,dialect,source_id,consent_attested,transcript_reviewed
 ```
 
-Compile a corpus:
+The compiler creates speaker-disjoint splits, an audit manifest, quality report, grapheme inventory, rejected-row report, and deterministic `dataset_version.json` fingerprint.
 
 ```bash
 python -m training.prepare_dataset \
@@ -74,22 +81,80 @@ python -m training.prepare_dataset \
   --output artifacts/tw
 ```
 
-The compiler enforces consent/review metadata, speaker-disjoint splits and emits `audit.jsonl`, `inventory.json`, `quality_report.json`, and `dataset_version.json`.
+## First-party team recordings
 
-## ASR training
+Fill `datasets/team_recordings_inventory.csv` with original file paths and provenance, then run:
 
 ```bash
-python -m training.asr.finetune_whisper \
-  --profile training/configs/languages/tw.yaml \
-  --train artifacts/tw/train.json \
-  --validation artifacts/tw/validation.json \
-  --output checkpoints/whisper-tw \
-  --fp16
+python -m training.ingest.import_team_recordings \
+  --inventory datasets/team_recordings_inventory.csv \
+  --input-root /path/to/original-recordings \
+  --corpus-root data/corpus
 ```
 
-Profiles currently use token-free low-resource experiments rather than inventing unsupported Whisper language tokens.
+Single-speaker recordings are normalized and segmented automatically. Rows marked `multi_speaker=true` are quarantined for diarization rather than mislabeled as one speaker.
 
-## TTS training gate
+Machine drafts are optional and never approve themselves:
+
+```bash
+python -m training.ingest.machine_drafts \
+  --corpus-root data/corpus \
+  --model large-v3
+```
+
+## External data policy
+
+`training/configs/source_catalog.yaml` is the source of truth for whether an external corpus is allowed for production training, evaluation only, or research only.
+
+Plan sources without downloading anything:
+
+```bash
+python -m training.data.plan_sources --language tw --usage production
+```
+
+A Hugging Face snapshot used for a governed experiment must be pinned to an explicit revision when the catalog requires it:
+
+```bash
+python -m training.data.snapshot_hf \
+  --catalog training/configs/source_catalog.yaml \
+  --source waxal_ug_asr \
+  --language tw \
+  --usage production \
+  --revision <commit-sha> \
+  --output data/external/waxal-tw
+```
+
+Provider snapshots are raw inputs. Provider-specific adapters map reviewed upstream schemas into our corpus schema. Unknown-speaker data is never assigned a fabricated speaker ID merely to satisfy split tooling.
+
+## ASR experiments and benchmarks
+
+Candidate architectures are versioned in `training/configs/asr_candidates.yaml`. Whisper-small is the first production baseline and Whisper-medium is the immediate capacity comparison. Alternative families remain visible but fail closed until their tokenizer/trainer prerequisites are implemented.
+
+Create a reproducible experiment plan:
+
+```bash
+python -m training.experiments.experiment_plan \
+  --language tw \
+  --dataset-version artifacts/tw/dataset_version.json \
+  --candidate whisper-small \
+  --output artifacts/tw/experiments/whisper-small.json
+```
+
+Run locally or render the exact same frozen plan for a cluster:
+
+```bash
+python -m training.experiments.runner --plan artifacts/tw/experiments/whisper-small.json --backend local
+python -m training.experiments.runner --plan artifacts/tw/experiments/whisper-small.json --backend slurm --output artifacts/tw/job.sbatch
+python -m training.experiments.runner --plan artifacts/tw/experiments/whisper-small.json --backend kubernetes --output artifacts/tw/job.json
+```
+
+Speech evaluation uses WER/CER plus diagnostic slices and serving performance—not SWE-bench. The normalized benchmark includes dialect, speaker, noise, and code-switch slices, p50/p95 latency, and real-time factor.
+
+Promotion thresholds live in `training/configs/benchmark_gates.yaml`.
+
+## TTS experiments
+
+NeMo FastPitch + HiFi-GAN remains the transparent baseline. Production training is blocked until the target-language grapheme/tokenizer policy is reviewed:
 
 ```bash
 python -m training.tts.preflight \
@@ -97,13 +162,75 @@ python -m training.tts.preflight \
   --artifacts artifacts/tw
 ```
 
-It intentionally fails until native-speaker/linguist review approves the grapheme/tokenizer policy.
+VoxCPM2 is an advanced adaptation candidate. Freeze a data-lineage-bound LoRA experiment:
+
+```bash
+python -m training.tts.build_voxcpm_experiment \
+  --language tw \
+  --dataset-version artifacts/tw/dataset_version.json \
+  --mode lora \
+  --output experiments/voxcpm2-tw.json
+```
+
+The runtime refuses to treat an unadapted base checkpoint as proof of Twi/Ga/Ewe/Hausa competence. Candidate TTS models require blind native-speaker ratings for naturalness, pronunciation, intelligibility, and speaker similarity.
+
+## Model registration, promotion, rollback
+
+Training outputs keep model cards tied to exact corpus fingerprints and metrics. Deployment pointers are kept separate from immutable artifacts:
+
+```text
+candidate -> staging -> production -> retired
+```
+
+Promote or rollback registered artifacts with:
+
+```bash
+python -m training.deploy.promote \
+  --root models \
+  --task asr \
+  --language tw \
+  --stage production \
+  --model-id <registered-model-id>
+
+python -m training.deploy.promote \
+  --root models \
+  --task asr \
+  --language tw \
+  --stage production \
+  --rollback
+```
+
+Pointer replacement is atomic; rollback never mutates a checkpoint directory.
+
+## Realtime conversation protocol
+
+`/v1/conversation` accepts PCM16 microphone frames. Processing runs in a cancellable child task so a fresh `start` message can barge into an older turn. Cancellation prevents stale output from being delivered; hard cancellation of already-running GPU kernels remains engine-specific.
+
+Protocol details: `docs/WEBSOCKET_PROTOCOL.md`.
+
+## TypeScript / React Native transport SDK
+
+```bash
+cd sdk/typescript
+npm install --ignore-scripts
+npm run build
+```
+
+The SDK contains typed HTTP helpers and an interruptible conversation WebSocket client. React Native microphone capture remains an app/platform adapter; the transport layer does not pretend browser `Blob` APIs are universal.
 
 ## Validation
 
 ```bash
-python -m compileall -q services training tests
+python -m compileall -q services training tests examples
+ruff check services training tests examples
 pytest -q
+
+cd sdk/typescript
+npm install --ignore-scripts
+npm run build
 ```
 
-Current execution plan: `docs/EXECUTION_BACKLOG.md`.
+GitHub Actions runs the Python compile/Ruff/pytest gate and strict TypeScript build on every push and pull request.
+
+Engineering decisions: `docs/LEAD_ENGINEER_DECISIONS.md`  
+Current backlog: `docs/EXECUTION_BACKLOG.md`

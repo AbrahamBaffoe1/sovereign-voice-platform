@@ -1,0 +1,22 @@
+schema_version: 1
+candidates:
+  whisper-small:
+    family: whisper
+    base_model: openai/whisper-small
+    trainable: true
+    deployment: faster-whisper
+  whisper-medium:
+    family: whisper
+    base_model: openai/whisper-medium
+    trainable: true
+    deployment: faster-whisper
+  w2v-bert-2:
+    family: w2v-bert
+    base_model: facebook/w2v-bert-2.0
+    trainable: false
+    blocked_reason: Requires reviewed language vocabulary/tokenizer trainer before execution.
+  qwen-audio-research:
+    family: multimodal
+    base_model: null
+    trainable: false
+    blocked_reason: Research placeholder; no production trainer is implemented.

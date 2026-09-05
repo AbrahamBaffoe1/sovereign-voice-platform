@@ -1,0 +1,13 @@
+schema_version: 1
+asr:
+  max_global_wer: 0.20
+  max_global_cer: 0.10
+  max_p95_latency_seconds: 2.0
+  max_real_time_factor: 0.60
+  max_slice_wer_regression_absolute: 0.03
+  require_slices: [dialect, speaker, noise, code_switch]
+tts:
+  min_naturalness_mos: 3.8
+  min_intelligibility_mos: 4.0
+  min_speaker_similarity_mos: 3.8
+  max_real_time_factor: 0.80

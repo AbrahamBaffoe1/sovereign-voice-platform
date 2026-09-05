@@ -25,6 +25,7 @@ class LanguageSpec:
     training_profile: str | None = None
     asr: dict[str, Any] | None = None
     nemo: dict[str, Any] | None = None
+    voxcpm: dict[str, Any] | None = None
 
 
 class LanguageRegistry:
@@ -38,7 +39,6 @@ class LanguageRegistry:
         raw_languages = payload.get("languages")
         if not isinstance(raw_languages, dict) or not raw_languages:
             raise ConfigurationError("languages.yaml must contain a non-empty 'languages' mapping")
-
         self._languages: dict[str, LanguageSpec] = {}
         self._aliases: dict[str, str] = {}
         for raw_code, raw in raw_languages.items():
@@ -49,7 +49,7 @@ class LanguageRegistry:
             spec = LanguageSpec(
                 code=code,
                 name=str(raw.get("name", code)),
-                iso639_3=(str(raw["iso639_3"]) if raw.get("iso639_3") else None),
+                iso639_3=str(raw["iso639_3"]) if raw.get("iso639_3") else None,
                 aliases=aliases,
                 tts_engine=str(raw.get("tts_engine", "chatterbox")),
                 normalizer=str(raw.get("normalizer", "generic")),
@@ -57,6 +57,7 @@ class LanguageRegistry:
                 training_profile=raw.get("training_profile"),
                 asr=raw.get("asr"),
                 nemo=raw.get("nemo"),
+                voxcpm=raw.get("voxcpm"),
             )
             if code in self._languages:
                 raise ConfigurationError(f"duplicate language code: {code}")

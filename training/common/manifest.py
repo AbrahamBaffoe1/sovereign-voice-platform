@@ -5,14 +5,15 @@ from __future__ import annotations
 import hashlib
 import json
 import unicodedata
+from collections.abc import Iterable
 from dataclasses import asdict, dataclass
 from pathlib import Path
-from typing import Iterable
 
 
 @dataclass(frozen=True, slots=True)
 class SpeechRecord:
     """Canonical speech sample used during preparation before NeMo/HF serialization."""
+
     audio_filepath: str
     text: str
     duration: float
@@ -26,7 +27,7 @@ class SpeechRecord:
     split: str | None = None
 
     def nemo_dict(self) -> dict[str, object]:
-        """Project a record into the fields consumed by NeMo, excluding audit-only metadata."""
+        """Project a record into fields consumed by NeMo while excluding audit-only metadata."""
         payload: dict[str, object] = {
             "audio_filepath": self.audio_filepath,
             "text": self.text,
@@ -95,7 +96,7 @@ def write_jsonl(path: Path, records: Iterable[SpeechRecord], *, nemo: bool = Tru
 
 
 def read_jsonl(path: Path) -> list[dict[str, object]]:
-    """Read a JSONL manifest with precise line errors so bad inputs fail before expensive GPU jobs."""
+    """Read JSONL with precise line errors so bad inputs fail before expensive GPU jobs."""
     rows: list[dict[str, object]] = []
     with path.open("r", encoding="utf-8") as handle:
         for line_no, line in enumerate(handle, 1):

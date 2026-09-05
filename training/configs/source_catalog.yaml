@@ -1,0 +1,47 @@
+schema_version: 1
+sources:
+  first_party_team:
+    provider: first_party
+    languages: [tw, gaa, ee, ha]
+    usage: production
+    license: consented-first-party
+    requires_revision_pin: false
+    notes: Primary corpus from consented team recordings and voice messages.
+  waxal_ug_asr:
+    provider: huggingface
+    repo_id: Ephraimmm/WaxalNLPr
+    languages: [tw, ee]
+    usage: production
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    notes: Speaker-aware augmentation; verify the selected subset and attribution before release.
+  ga_parallel_ccby:
+    provider: huggingface
+    repo_id: antwi/ga-speech-parallel
+    languages: [gaa]
+    usage: production
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    notes: Public schema does not guarantee stable speaker IDs; use as training-only augmentation.
+  common_voice_ha:
+    provider: huggingface
+    repo_id: mozilla-foundation/common_voice_17_0
+    languages: [ha]
+    usage: production
+    license: CC0-1.0
+    requires_revision_pin: true
+    notes: Use client_id for speaker-disjoint splitting when present.
+  nasa_hausa_eval:
+    provider: external
+    languages: [ha]
+    usage: evaluation
+    license: review-required
+    requires_revision_pin: true
+    notes: Placeholder for an independently held-out licensed Hausa evaluation set.
+  kasa42_research:
+    provider: external
+    languages: [tw, gaa, ee, ha]
+    usage: research
+    license: non-commercial-or-review-required
+    requires_revision_pin: true
+    notes: Must never enter production training unless legal review changes the catalog entry.

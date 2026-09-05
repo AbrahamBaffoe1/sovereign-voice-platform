@@ -6,15 +6,21 @@ __pycache__/
 .venv/
 .env
 .DS_Store
-models/*
-!models/.gitkeep
+
+# Private/runtime speech data must never enter source control.
 data/voices/*
 !data/voices/.gitkeep
+data/corpus/
+data/external/
+
+# Model artifacts and training outputs are registered externally/by metadata.
+models/*
+!models/.gitkeep
 artifacts/
 checkpoints/
 wandb/
-# Raw corpus audio is data, not source code. Commit metadata/policy only.
-datasets/*/wavs/*
-!datasets/*/wavs/.gitkeep
-sdk/typescript/dist/
+
+# SDK/build outputs.
+node_modules/
 sdk/typescript/node_modules/
+sdk/typescript/dist/
