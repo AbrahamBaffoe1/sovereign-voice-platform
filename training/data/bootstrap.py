@@ -152,11 +152,21 @@ def _acquire_in_worker(
 
 
 def _read_version(artifact_dir: Path) -> dict[str, Any]:
-    """Return the immutable compiler identity included in the top-level build report."""
+    """Return a non-empty immutable compiler identity for the top-level build report."""
     path = artifact_dir / "dataset_version.json"
+    if not path.exists():
+        raise RuntimeError(f"missing dataset version: {path}")
     payload = json.loads(path.read_text(encoding="utf-8"))
     if not isinstance(payload, dict):
         raise RuntimeError(f"invalid dataset version: {path}")
+    accepted = int(payload.get("accepted", 0))
+    fingerprint = str(payload.get("fingerprint_sha256") or "").strip()
+    if accepted < 1:
+        raise RuntimeError(
+            f"refusing to freeze empty corpus artifact: {artifact_dir}; inspect rejected.json and quality_report.json"
+        )
+    if len(fingerprint) != 64:
+        raise RuntimeError(f"dataset version has invalid fingerprint: {path}")
     return payload
 
 
@@ -199,13 +209,14 @@ def _freeze_one(
         artifacts_root=artifacts_root,
         profiles_dir=profiles_dir,
     )
+    training_version = _read_version(training_dir)
     result: dict[str, Any] = {
         "language": language,
         "task": task,
         "sample_rate": target_sample_rate(language=language, task=task, profiles_dir=profiles_dir),
         "acquisition": summary,
         "training_artifact_dir": str(training_dir),
-        "training_version": _read_version(training_dir),
+        "training_version": training_version,
         "evaluation_artifact_dir": None,
         "evaluation_version": None,
         "leakage_report": None,
@@ -227,6 +238,7 @@ def _freeze_one(
             profiles_dir=profiles_dir,
             fixed_split="test",
         )
+        evaluation_version = _read_version(evaluation_dir)
         leakage_path = artifacts_root / language / task / "exact_audio_leakage.json"
         leakage = assert_no_exact_audio_leakage(
             training_audit=training_dir / "audit.jsonl",
@@ -236,7 +248,7 @@ def _freeze_one(
         result.update(
             {
                 "evaluation_artifact_dir": str(evaluation_dir),
-                "evaluation_version": _read_version(evaluation_dir),
+                "evaluation_version": evaluation_version,
                 "leakage_report": leakage,
             }
         )
