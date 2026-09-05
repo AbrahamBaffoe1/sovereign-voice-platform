@@ -20,23 +20,37 @@ def test_bootstrap_plan_separates_training_and_evaluation() -> None:
     assert "cdli_ga_standard_eval" not in plan.sources(language="gaa", task="asr", role="train")
 
 
-def test_dry_run_exposes_fixed_and_resolve_and_lock_revisions() -> None:
-    """Operators should see exactly which datasets are already pinned before a long acquisition starts."""
+def test_dry_run_exposes_pinned_revisions() -> None:
+    """Operators should see exact immutable upstream revisions before a long acquisition starts."""
     catalog = SourceCatalog(ROOT / "training/configs/source_catalog.yaml")
     plan = BootstrapPlan(ROOT / "training/configs/bootstrap_corpora.yaml")
     rows = dry_run_plan(language="tw", task="asr", catalog=catalog, plan=plan, include_eval=True)
     by_source = {row["source_id"]: row for row in rows}
     assert by_source["waxal_akan_asr"]["revision"] == "5f4d8ca24f2b9d168b2ee545f1febaaff4b40580"
-    assert by_source["twi_words_400k"]["revision"] == "resolve-and-lock"
+    assert by_source["twi_words_400k"]["revision"] == "e808e3c75f31d306b33f7adb79a22f5aa3ea28f1"
     assert by_source["waxal_akan_eval"]["role"] == "eval"
 
 
 def test_production_plan_excludes_research_only_sources() -> None:
-    """A useful research corpus is still ineligible for commercial/production training by default."""
+    """Useful research corpora remain ineligible for commercial/production training by default."""
     catalog = SourceCatalog(ROOT / "training/configs/source_catalog.yaml")
     production = {source.source_id for source in catalog.plan(language="tw", usage="production", task="asr")}
     assert "kasa42_research" not in production
     assert "waxal_akan_asr" in production
+
+
+def test_noncommercial_ewe_navigation_is_excluded_from_production() -> None:
+    """The current CC-BY-NC Ewe navigation corpus must stay out of the production bootstrap plan."""
+    catalog = SourceCatalog(ROOT / "training/configs/source_catalog.yaml")
+    plan = BootstrapPlan(ROOT / "training/configs/bootstrap_corpora.yaml")
+    assert plan.sources(language="ee", task="asr", role="train") == ("waxal_ewe_asr",)
+    assert plan.sources(language="ee", task="tts", role="train") == ("waxal_ewe_tts",)
+    source = catalog.get("ewe_navigation_research")
+    assert source.usage == "research"
+    assert source.license == "CC-BY-NC-4.0"
+    assert not source.governance_approved
+    production = {item.source_id for item in catalog.plan(language="ee", usage="production", task="asr")}
+    assert "ewe_navigation_research" not in production
 
 
 def test_existing_revision_lock_is_reused_without_network(tmp_path: Path) -> None:
