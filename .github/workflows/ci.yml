@@ -17,6 +17,8 @@ jobs:
       - run: python -m compileall -q services training tests examples
       - run: ruff check services training tests examples
       - run: pytest -q
+      - name: Validate shell launchers
+        run: bash -n scripts/*.sh
       - name: Validate public bootstrap source plan
         run: python -m training.data.bootstrap --language all --task both --include-eval --dry-run
 
