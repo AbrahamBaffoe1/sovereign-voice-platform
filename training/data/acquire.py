@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import gc
 import hashlib
 import io
 import json
@@ -75,7 +76,7 @@ def _field(row: dict[str, Any], source: DataSource, semantic: str) -> Any:
 
 
 def _raw_audio_bytes(value: Any) -> bytes:
-    """Extract encoded audio bytes from common Hugging Face Audio(decode=False) and decoded forms."""
+    """Extract encoded audio bytes from Hugging Face decode-disabled values and compatible fallbacks."""
     if isinstance(value, (bytes, bytearray, memoryview)):
         return bytes(value)
     if isinstance(value, str):
@@ -93,7 +94,7 @@ def _raw_audio_bytes(value: Any) -> bytes:
             buffer = io.BytesIO()
             sf.write(buffer, np.asarray(array, dtype=np.float32), int(rate), format="WAV", subtype="PCM_16")
             return buffer.getvalue()
-    # datasets>=4 may expose an AudioDecoder object instead of a dict when decoding is enabled.
+    # Compatibility only: normal streaming acquisition disables media decoding before iteration.
     get_samples = getattr(value, "get_all_samples", None)
     if callable(get_samples):
         samples = get_samples()
@@ -110,7 +111,7 @@ def _raw_audio_bytes(value: Any) -> bytes:
 
 
 def _write_normalized_wav(payload: bytes, destination: Path, *, max_seconds: float) -> float:
-    """Decode arbitrary provider audio, resample to 16 kHz mono, and persist deterministic PCM16 WAV."""
+    """Decode provider audio, resample to 16 kHz mono, and persist deterministic PCM16 WAV."""
     samples, sample_rate = decode_audio(payload, max_seconds=max_seconds, target_rate=16000)
     destination.parent.mkdir(parents=True, exist_ok=True)
     sf.write(destination, samples, sample_rate, format="WAV", subtype="PCM_16")
@@ -129,7 +130,7 @@ def resolve_revision(
     refresh_lock: bool = False,
     token: str | None = None,
 ) -> str:
-    """Resolve a full HF commit SHA and freeze it before row iteration begins."""
+    """Resolve a full Hugging Face commit SHA and freeze it before row iteration begins."""
     if source.provider != "huggingface" or not source.repo_id:
         raise ValueError(f"source {source.source_id} is not a Hugging Face source")
     lock_path = _lock_path(output_root, source)
@@ -147,8 +148,7 @@ def resolve_revision(
             from huggingface_hub import HfApi
         except ImportError as exc:
             raise RuntimeError("install the 'data' extra to resolve Hugging Face dataset revisions") from exc
-        info = HfApi(token=token).dataset_info(source.repo_id)
-        revision = str(info.sha or "")
+        revision = str(HfApi(token=token).dataset_info(source.repo_id).sha or "")
     if source.requires_revision_pin and not re.fullmatch(r"[0-9a-fA-F]{40}", revision):
         raise ValueError(f"source {source.source_id} did not resolve to a full 40-character commit SHA")
     lock_path.parent.mkdir(parents=True, exist_ok=True)
@@ -169,9 +169,9 @@ def resolve_revision(
 
 
 def _load_hf_rows(source: DataSource, *, revision: str, token: str | None) -> Iterable[dict[str, Any]]:
-    """Stream only the configured source split instead of snapshotting giant repositories such as WAXAL."""
+    """Stream a configured subset/split with media decoding disabled for dependency-light acquisition."""
     try:
-        from datasets import Audio, load_dataset
+        from datasets import load_dataset
     except ImportError as exc:
         raise RuntimeError("install the 'data' extra before acquiring Hugging Face speech datasets") from exc
     kwargs: dict[str, Any] = {
@@ -184,13 +184,12 @@ def _load_hf_rows(source: DataSource, *, revision: str, token: str | None) -> It
     if source.config and source.config != "default":
         kwargs["name"] = source.config
     dataset = load_dataset(**kwargs)
-    audio_field = source.fields.get("audio", "audio")
-    try:
-        dataset = dataset.cast_column(audio_field, Audio(decode=False))
-    except (KeyError, TypeError, ValueError):
-        # Some SoundFolder datasets do not expose castable features in streaming mode. The row extractor
-        # still handles decoded AudioDecoder values, so this is a compatibility fallback rather than a skip.
-        pass
+    # Hugging Face IterableDataset.decode(False) is the supported streaming API for receiving
+    # paths/encoded bytes without constructing TorchCodec decoders. Applying it to the entire
+    # iterable also avoids provider generators re-encoding Audio values during iteration.
+    decode = getattr(dataset, "decode", None)
+    if callable(decode):
+        dataset = decode(False)
     return dataset
 
 
@@ -200,6 +199,18 @@ def _upstream_id(row: dict[str, Any], source: DataSource, index: int) -> str:
     if value is not None and str(value).strip():
         return str(value).strip()
     return f"row-{index:09d}"
+
+
+def _release_stream(iterator: object, rows: object) -> None:
+    """Release abandoned streaming iterators before interpreter finalization.
+
+    Smoke tests intentionally stop after a few examples. PyArrow/Hugging Face streaming readers may
+    own native background state; destroying the iterator while Python is still fully alive prevents
+    that state from being finalized after the interpreter has already torn down its GIL state.
+    """
+    del iterator
+    del rows
+    gc.collect()
 
 
 def acquire_source(
@@ -225,6 +236,8 @@ def acquire_source(
         raise ValueError(f"source {source.source_id} cannot enter evaluation")
     if source.provider != "huggingface":
         raise ValueError(f"acquisition provider is not implemented for {source.source_id}: {source.provider}")
+    if max_samples is not None and max_samples < 1:
+        raise ValueError("max_samples must be positive when provided")
 
     revision = resolve_revision(
         source,
@@ -241,62 +254,72 @@ def acquire_source(
     imported = 0
     skipped = 0
     hours = 0.0
+    rows = _load_hf_rows(source, revision=revision, token=token)
+    iterator = iter(rows)
 
-    with metadata_path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=_METADATA_FIELDS)
-        writer.writeheader()
-        for index, row in enumerate(_load_hf_rows(source, revision=revision, token=token)):
-            if max_samples is not None and imported >= max_samples:
-                break
-            try:
-                text = normalize_transcript(str(_field(row, source, "text") or ""))
-                if not text:
+    try:
+        with metadata_path.open("w", encoding="utf-8", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=_METADATA_FIELDS)
+            writer.writeheader()
+            index = 0
+            while max_samples is None or imported < max_samples:
+                try:
+                    row = next(iterator)
+                except StopIteration:
+                    break
+                try:
+                    text = normalize_transcript(str(_field(row, source, "text") or ""))
+                    if not text:
+                        skipped += 1
+                        index += 1
+                        continue
+                    payload = _raw_audio_bytes(_field(row, source, "audio"))
+                    upstream_id = _upstream_id(row, source, index)
+                    provisional = audio_dir / f"{_safe_name(upstream_id)}.wav"
+                    duration = _write_normalized_wav(payload, provisional, max_seconds=max_clip_seconds)
+                    digest = file_sha256(provisional)
+                    if digest in seen:
+                        provisional.unlink(missing_ok=True)
+                        skipped += 1
+                        index += 1
+                        continue
+                    seen.add(digest)
+                    final_path = audio_dir / f"{_safe_name(upstream_id)}-{digest[:12]}.wav"
+                    if final_path != provisional:
+                        provisional.replace(final_path)
+                    speaker_value = _field(row, source, "speaker")
+                    dialect_value = _field(row, source, "dialect")
+                    speaker = str(speaker_value).strip() if speaker_value is not None else ""
+                    dialect = str(dialect_value).strip() if dialect_value is not None else "unknown"
+                    training_only = source.training_only or not speaker
+                    writer.writerow(
+                        {
+                            "audio": str(final_path.resolve()),
+                            "text": text,
+                            "speaker": speaker,
+                            "dialect": dialect or "unknown",
+                            "source_id": f"{source.source_id}:{upstream_id}",
+                            "consent_attested": "false",
+                            "transcript_reviewed": "false",
+                            "governance_approved": str(source.governance_approved).lower(),
+                            "upstream_validated": str(source.upstream_validated).lower(),
+                            "training_only": str(training_only).lower(),
+                            "source_license": source.license,
+                            "source_revision": revision,
+                            "governance_basis": f"licensed-external:{source.license}",
+                            "source_dataset": source.repo_id or "",
+                            "source_config": source.config or "default",
+                            "source_split": source.split,
+                        }
+                    )
+                    imported += 1
+                    hours += duration / 3600.0
+                except Exception:
                     skipped += 1
-                    continue
-                payload = _raw_audio_bytes(_field(row, source, "audio"))
-                upstream_id = _upstream_id(row, source, index)
-                provisional = audio_dir / f"{_safe_name(upstream_id)}.wav"
-                duration = _write_normalized_wav(payload, provisional, max_seconds=max_clip_seconds)
-                digest = file_sha256(provisional)
-                if digest in seen:
-                    provisional.unlink(missing_ok=True)
-                    skipped += 1
-                    continue
-                seen.add(digest)
-                # SHA suffix prevents filename collisions when provider IDs are repeated across shards.
-                final_path = audio_dir / f"{_safe_name(upstream_id)}-{digest[:12]}.wav"
-                if final_path != provisional:
-                    provisional.replace(final_path)
-                speaker_value = _field(row, source, "speaker")
-                dialect_value = _field(row, source, "dialect")
-                speaker = str(speaker_value).strip() if speaker_value is not None else ""
-                dialect = str(dialect_value).strip() if dialect_value is not None else "unknown"
-                training_only = source.training_only or not speaker
-                writer.writerow(
-                    {
-                        "audio": str(final_path.resolve()),
-                        "text": text,
-                        "speaker": speaker,
-                        "dialect": dialect or "unknown",
-                        "source_id": f"{source.source_id}:{upstream_id}",
-                        "consent_attested": "false",
-                        "transcript_reviewed": "false",
-                        "governance_approved": str(source.governance_approved).lower(),
-                        "upstream_validated": str(source.upstream_validated).lower(),
-                        "training_only": str(training_only).lower(),
-                        "source_license": source.license,
-                        "source_revision": revision,
-                        "governance_basis": f"licensed-external:{source.license}",
-                        "source_dataset": source.repo_id or "",
-                        "source_config": source.config or "default",
-                        "source_split": source.split,
-                    }
-                )
-                imported += 1
-                hours += duration / 3600.0
-            except Exception:
-                skipped += 1
-                continue
+                finally:
+                    index += 1
+    finally:
+        _release_stream(iterator, rows)
 
     metadata_sha = file_sha256(metadata_path)
     receipt = {
@@ -409,6 +432,7 @@ def acquire_language(
                 raise
             failures.append({"source_id": source.source_id, "error": f"{type(exc).__name__}:{exc}"})
     combined_dir = output_root / language / task
+    combined_dir.mkdir(parents=True, exist_ok=True)
     train_combined = combined_dir / "metadata.csv"
     eval_combined = combined_dir / "evaluation_metadata.csv"
     train_rows = merge_metadata(train_metadata, train_combined) if train_metadata else 0
