@@ -1,11 +1,12 @@
 DATA_ROOT ?= data/bootstrap
 ARTIFACTS_ROOT ?= artifacts/bootstrap
 EXPERIMENTS_ROOT ?= artifacts/experiments/asr
+TTS_READINESS_ROOT ?= artifacts/tts-readiness
 MIN_FREE_GB ?= 0
 LANGUAGE ?= all
 TASK ?= both
 
-.PHONY: install install-all data-install dev test lint typecheck run compose-up compose-down validate corpus-plan corpus-v0 corpus-v0-strict asr-plan asr-baseline asr-baseline-strict
+.PHONY: install install-all data-install dev test lint typecheck run compose-up compose-down validate corpus-plan corpus-v0 corpus-v0-strict asr-plan asr-baseline asr-baseline-strict tts-readiness tts-readiness-strict
 
 install:
 	python -m pip install -e .
@@ -51,6 +52,12 @@ asr-baseline:
 
 asr-baseline-strict:
 	python -m training.asr.run_baseline --language $(LANGUAGE) --artifacts-root $(ARTIFACTS_ROOT) --output-root $(EXPERIMENTS_ROOT) --require-external-eval --execute
+
+tts-readiness:
+	python -m training.tts.readiness --language $(LANGUAGE) --artifacts-root $(ARTIFACTS_ROOT) --output-root $(TTS_READINESS_ROOT)
+
+tts-readiness-strict:
+	python -m training.tts.readiness --language $(LANGUAGE) --artifacts-root $(ARTIFACTS_ROOT) --output-root $(TTS_READINESS_ROOT) --strict
 
 compose-up:
 	docker compose up --build
