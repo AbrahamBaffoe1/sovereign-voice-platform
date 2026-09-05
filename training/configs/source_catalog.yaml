@@ -118,6 +118,7 @@ sources:
     revision: 5f4d8ca24f2b9d168b2ee545f1febaaff4b40580
     config: ewe_asr
     split: train
+    data_files_glob: data/ASR/ewe/ewe-train-*.parquet
     languages: [ee]
     tasks: [asr]
     usage: production
@@ -126,7 +127,7 @@ sources:
     governance_approved: true
     upstream_validated: true
     fields: {audio: audio, text: transcription, speaker: speaker_id, id: id, dialect: language}
-    notes: University of Ghana WAXAL Ewe natural speech; train split only.
+    notes: University of Ghana WAXAL Ewe natural speech; raw pinned Parquet avoids an upstream feature-schema/index mismatch.
 
   waxal_ewe_eval:
     provider: huggingface
@@ -134,6 +135,7 @@ sources:
     revision: 5f4d8ca24f2b9d168b2ee545f1febaaff4b40580
     config: ewe_asr
     split: test
+    data_files_glob: data/ASR/ewe/ewe-test-*.parquet
     languages: [ee]
     tasks: [asr]
     usage: evaluation
@@ -143,7 +145,7 @@ sources:
     upstream_validated: true
     optional: true
     fields: {audio: audio, text: transcription, speaker: speaker_id, id: id, dialect: language}
-    notes: Upstream WAXAL Ewe test split reserved from bootstrap train data.
+    notes: WAXAL Ewe held-out test data; raw pinned Parquet preserves the evaluation split despite the upstream schema mismatch.
 
   waxal_ewe_tts:
     provider: huggingface
