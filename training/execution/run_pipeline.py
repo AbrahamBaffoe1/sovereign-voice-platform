@@ -212,6 +212,9 @@ def main() -> None:
         "started_at": _now(),
         "language": args.language,
         "workspace": str(layout.root),
+        # Record the Git revision supplied by the launcher so an operator can prove which source code
+        # produced a corpus/checkpoint without depending on the checkout still existing months later.
+        "source_revision": os.environ.get("VOICE_SOURCE_SHA"),
         "environment_report": str(layout.state_root / "EXECUTION_ENVIRONMENT.json"),
         "environment": environment,
         "phases": {},
