@@ -39,6 +39,10 @@ tts-nemo = [
   "nemo_toolkit[tts]>=2.4",
   "torch>=2.6",
 ]
+data = [
+  "datasets>=4,<5",
+  "huggingface_hub>=0.34,<1",
+]
 training-asr = [
   "transformers>=4.55,<6",
   "datasets>=4,<5",

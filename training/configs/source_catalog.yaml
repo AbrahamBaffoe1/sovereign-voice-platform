@@ -1,47 +1,274 @@
-schema_version: 1
+schema_version: 2
 sources:
   first_party_team:
     provider: first_party
     languages: [tw, gaa, ee, ha]
+    tasks: [asr, tts]
     usage: production
     license: consented-first-party
     requires_revision_pin: false
-    notes: Primary corpus from consented team recordings and voice messages.
-  waxal_ug_asr:
+    governance_approved: true
+    upstream_validated: false
+    notes: Future first-party layer from consented team recordings and voice messages.
+
+  waxal_akan_asr:
     provider: huggingface
-    repo_id: Ephraimmm/WaxalNLPr
-    languages: [tw, ee]
+    repo_id: google/WaxalNLP
+    revision: 5f4d8ca24f2b9d168b2ee545f1febaaff4b40580
+    config: aka_asr_v2
+    split: train
+    languages: [tw]
+    tasks: [asr]
     usage: production
     license: CC-BY-4.0
     requires_revision_pin: true
-    notes: Speaker-aware augmentation; verify the selected subset and attribution before release.
-  ga_parallel_ccby:
+    governance_approved: true
+    upstream_validated: true
+    fields: {audio: audio, text: transcription, speaker: speaker_id, id: id, dialect: language}
+    notes: University of Ghana WAXAL Akan natural speech; build the bootstrap model from the train split only.
+
+  waxal_akan_eval:
     provider: huggingface
-    repo_id: antwi/ga-speech-parallel
-    languages: [gaa]
-    usage: production
-    license: CC-BY-4.0
-    requires_revision_pin: true
-    notes: Public schema does not guarantee stable speaker IDs; use as training-only augmentation.
-  common_voice_ha:
-    provider: huggingface
-    repo_id: mozilla-foundation/common_voice_17_0
-    languages: [ha]
-    usage: production
-    license: CC0-1.0
-    requires_revision_pin: true
-    notes: Use client_id for speaker-disjoint splitting when present.
-  nasa_hausa_eval:
-    provider: external
-    languages: [ha]
+    repo_id: google/WaxalNLP
+    revision: 5f4d8ca24f2b9d168b2ee545f1febaaff4b40580
+    config: aka_asr_v2
+    split: test
+    languages: [tw]
+    tasks: [asr]
     usage: evaluation
-    license: review-required
+    license: CC-BY-4.0
     requires_revision_pin: true
-    notes: Placeholder for an independently held-out licensed Hausa evaluation set.
+    governance_approved: true
+    upstream_validated: true
+    optional: true
+    fields: {audio: audio, text: transcription, speaker: speaker_id, id: id, dialect: language}
+    notes: Speaker-disjoint WAXAL Akan test split reserved from training.
+
+  waxal_twi_tts:
+    provider: huggingface
+    repo_id: google/WaxalNLP
+    revision: 5f4d8ca24f2b9d168b2ee545f1febaaff4b40580
+    config: twi_tts
+    split: train
+    languages: [tw]
+    tasks: [tts]
+    usage: production
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    fields: {audio: audio, text: text, speaker: speaker_id, id: id, dialect: locale}
+    notes: High-quality Twi TTS portion of WAXAL from University of Ghana.
+
+  twi_words_400k:
+    provider: huggingface
+    repo_id: michsethowusu/twi-words-speech-text-parallel-400k
+    revision: null
+    config: default
+    split: train
+    languages: [tw]
+    tasks: [asr, tts]
+    usage: production
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    training_only: true
+    fields: {audio: audio, text: text}
+    notes: 413,463 word-level forced-aligned pairs; lexical/pronunciation augmentation only.
+
+  ga_words_90k:
+    provider: huggingface
+    repo_id: ghananlpcommunity/ga-speech-text-parallel-90k
+    revision: null
+    config: default
+    split: train
+    languages: [gaa]
+    tasks: [asr, tts]
+    usage: production
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    training_only: true
+    fields: {audio: audio, text: text}
+    notes: 98,343 Ga word-level pairs; no public speaker IDs, therefore train-only.
+
+  cdli_ga_standard_eval:
+    provider: huggingface
+    repo_id: cdli/ghanian_ga_standard_speech_v1.0
+    revision: null
+    config: default
+    split: test
+    languages: [gaa]
+    tasks: [asr]
+    usage: evaluation
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    gated: true
+    optional: true
+    fields: {audio: audio, text: text, speaker: speaker_id, id: id}
+    notes: 8.8h/81-speaker CDLI Ga standard speech; held out and gated by dataset terms.
+
+  waxal_ewe_asr:
+    provider: huggingface
+    repo_id: google/WaxalNLP
+    revision: 5f4d8ca24f2b9d168b2ee545f1febaaff4b40580
+    config: ewe_asr
+    split: train
+    languages: [ee]
+    tasks: [asr]
+    usage: production
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    fields: {audio: audio, text: transcription, speaker: speaker_id, id: id, dialect: language}
+    notes: University of Ghana WAXAL Ewe natural speech; train split only.
+
+  waxal_ewe_eval:
+    provider: huggingface
+    repo_id: google/WaxalNLP
+    revision: 5f4d8ca24f2b9d168b2ee545f1febaaff4b40580
+    config: ewe_asr
+    split: test
+    languages: [ee]
+    tasks: [asr]
+    usage: evaluation
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    optional: true
+    fields: {audio: audio, text: transcription, speaker: speaker_id, id: id, dialect: language}
+    notes: Upstream WAXAL Ewe test split reserved from our bootstrap train data.
+
+  waxal_ewe_tts:
+    provider: huggingface
+    repo_id: google/WaxalNLP
+    revision: 5f4d8ca24f2b9d168b2ee545f1febaaff4b40580
+    config: ewe_tts
+    split: train
+    languages: [ee]
+    tasks: [tts]
+    usage: production
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    fields: {audio: audio, text: text, speaker: speaker_id, id: id, dialect: locale}
+    notes: University of Ghana WAXAL Ewe TTS data.
+
+  ewe_navigation_speech:
+    provider: huggingface
+    repo_id: ghananlpcommunity/navigation-corpus-speech-full-ewe
+    revision: null
+    config: default
+    split: train
+    languages: [ee]
+    tasks: [asr, tts]
+    usage: production
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    training_only: true
+    fields: {audio: audio, text: text}
+    notes: Navigation-domain Ewe speech; train-only domain augmentation.
+
+  hausa_commonvoice_derived:
+    provider: huggingface
+    repo_id: mide7x/hausa_voice_dataset
+    revision: null
+    config: default
+    split: train
+    languages: [ha]
+    tasks: [asr]
+    usage: production
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    training_only: true
+    fields: {audio: audio, text: transcription}
+    notes: 3,160-row Hausa corpus derived from Common Voice; no stable speaker field, therefore train-only.
+
+  waxal_hausa_tts:
+    provider: huggingface
+    repo_id: google/WaxalNLP
+    revision: 5f4d8ca24f2b9d168b2ee545f1febaaff4b40580
+    config: hau_tts
+    split: train
+    languages: [ha]
+    tasks: [tts]
+    usage: production
+    license: CC-BY-SA-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    fields: {audio: audio, text: text, speaker: speaker_id, id: id, dialect: locale}
+    notes: WAXAL Hausa TTS; preserve attribution/share-alike obligations for distributed derivatives.
+
+  bibletts_hausa:
+    provider: huggingface
+    repo_id: vpetukhov/bible_tts_hausa
+    revision: 1b0e9acd975a677bb7505d9f1ba88cf0c2f884b4
+    config: default
+    split: train
+    languages: [ha]
+    tasks: [tts]
+    usage: production
+    license: CC-BY-SA-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    training_only: true
+    fields: {audio: audio, text: sentence, id: verse, dialect: locale}
+    notes: 86.6 aligned hours of studio-quality single-speaker Hausa; train-only read-speech augmentation.
+
+  dialectra_hausa_eval:
+    provider: huggingface
+    repo_id: Dialectra/dialectra-hausa-speech-corpus-v1
+    revision: fc283b9d7e0ba192446b36af81d2dfea6accc60e
+    config: default
+    split: train
+    languages: [ha]
+    tasks: [asr]
+    usage: evaluation
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    optional: true
+    fields: {audio: audio, text: text, speaker: speaker_id, id: audio_id, dialect: dialect_group}
+    notes: Small dialect-aware natural Hausa corpus reserved for diagnostic evaluation.
+
+  ghana_speech_eval:
+    provider: huggingface
+    repo_id: ghananlpcommunity/ghana-speech-eval
+    revision: null
+    config: null
+    split: eval
+    languages: [tw, gaa, ee]
+    tasks: [asr]
+    usage: evaluation
+    license: CC-BY-4.0
+    requires_revision_pin: true
+    governance_approved: true
+    upstream_validated: true
+    optional: true
+    fields: {audio: audio, text: text, id: subset, dialect: language}
+    notes: Explicit evaluation-only Ghana benchmark; retained in catalog for future per-config benchmark imports.
+
   kasa42_research:
     provider: external
     languages: [tw, gaa, ee, ha]
+    tasks: [asr, tts]
     usage: research
     license: non-commercial-or-review-required
     requires_revision_pin: true
-    notes: Must never enter production training unless legal review changes the catalog entry.
+    governance_approved: false
+    upstream_validated: false
+    notes: Research only unless a separate commercial license is documented.

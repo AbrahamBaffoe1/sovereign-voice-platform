@@ -12,7 +12,7 @@ from pathlib import Path
 
 @dataclass(frozen=True, slots=True)
 class SpeechRecord:
-    """Canonical speech sample used during preparation before NeMo/HF serialization."""
+    """Canonical speech sample plus enough governance metadata to reproduce its training eligibility."""
 
     audio_filepath: str
     text: str
@@ -24,6 +24,12 @@ class SpeechRecord:
     source_id: str | None = None
     consent_attested: bool | None = None
     transcript_reviewed: bool | None = None
+    governance_approved: bool | None = None
+    upstream_validated: bool | None = None
+    training_only: bool | None = None
+    source_license: str | None = None
+    source_revision: str | None = None
+    governance_basis: str | None = None
     split: str | None = None
 
     def nemo_dict(self) -> dict[str, object]:
@@ -67,7 +73,7 @@ def stable_partition(key: str, train: float = 0.90, validation: float = 0.05) ->
 
 
 def dataset_fingerprint(records: Iterable[SpeechRecord]) -> str:
-    """Hash accepted record identity/text/provenance into a stable dataset version fingerprint."""
+    """Hash sample identity, labels, provenance, and split policy into a stable dataset fingerprint."""
     digest = hashlib.sha256()
     canonical = sorted(
         (
@@ -76,6 +82,9 @@ def dataset_fingerprint(records: Iterable[SpeechRecord]) -> str:
             record.speaker or "",
             record.dialect or "",
             record.source_id or "",
+            record.source_license or "",
+            record.source_revision or "",
+            "training-only" if record.training_only else "split-eligible",
             record.split or "",
         )
         for record in records

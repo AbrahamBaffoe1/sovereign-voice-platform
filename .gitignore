@@ -12,6 +12,7 @@ data/voices/*
 !data/voices/.gitkeep
 data/corpus/
 data/external/
+data/bootstrap/
 
 # Model artifacts and training outputs are registered externally/by metadata.
 models/*

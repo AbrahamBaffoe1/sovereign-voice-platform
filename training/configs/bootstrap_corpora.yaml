@@ -1,0 +1,26 @@
+schema_version: 1
+languages:
+  tw:
+    asr:
+      train: [waxal_akan_asr, twi_words_400k]
+      eval: [waxal_akan_eval]
+    tts:
+      train: [waxal_twi_tts, twi_words_400k]
+  gaa:
+    asr:
+      train: [ga_words_90k]
+      eval: [cdli_ga_standard_eval]
+    tts:
+      train: [ga_words_90k]
+  ee:
+    asr:
+      train: [waxal_ewe_asr, ewe_navigation_speech]
+      eval: [waxal_ewe_eval]
+    tts:
+      train: [waxal_ewe_tts, ewe_navigation_speech]
+  ha:
+    asr:
+      train: [hausa_commonvoice_derived]
+      eval: [dialectra_hausa_eval]
+    tts:
+      train: [waxal_hausa_tts, bibletts_hausa]
