@@ -10,17 +10,29 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 def test_target_languages_are_custom_asr_routes() -> None:
-    """The four training targets must not silently route through the generic shared model."""
+    """The four training targets must use explicit production pointers, never the generic shared model."""
     settings = Settings(language_config=ROOT / "config/languages.yaml")
     router = ASRRouter(settings, LanguageRegistry(settings.language_config))
-    assert router.route_description("twi")["mode"] == "custom"
-    assert router.route_description("ga")["model"] == "models/asr/gaa"
-    assert router.route_description("ewe")["language"] == "ee"
-    assert router.route_description("hausa")["language"] == "ha"
+
+    expected = {
+        "twi": ("tw", "models/deployments/asr/tw/production.json"),
+        "ga": ("gaa", "models/deployments/asr/gaa/production.json"),
+        "ewe": ("ee", "models/deployments/asr/ee/production.json"),
+        "hausa": ("ha", "models/deployments/asr/ha/production.json"),
+    }
+    for alias, (language, model) in expected.items():
+        route = router.route_description(alias)
+        assert route["mode"] == "custom"
+        assert route["language"] == language
+        assert route["model"] == model
 
 
 def test_default_auto_detect_route_remains_shared() -> None:
     """No explicit language hint should keep using the deployment's generic discovery model."""
     settings = Settings(language_config=ROOT / "config/languages.yaml", asr_model="large-v3")
     router = ASRRouter(settings, LanguageRegistry(settings.language_config))
-    assert router.route_description(None) == {"language": None, "mode": "shared", "model": "large-v3"}
+    assert router.route_description(None) == {
+        "language": None,
+        "mode": "shared",
+        "model": "large-v3",
+    }
