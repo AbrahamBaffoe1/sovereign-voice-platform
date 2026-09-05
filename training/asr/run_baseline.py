@@ -27,6 +27,26 @@ def _jsonl_rows(path: Path) -> int:
         return sum(1 for line in handle if line.strip())
 
 
+def _audit_split_rows(path: Path, split: str) -> int:
+    """Count one audit split as a stream so very large corpus manifests never need to fit in RAM."""
+    if not path.exists():
+        return 0
+    count = 0
+    with path.open("r", encoding="utf-8") as handle:
+        for line_number, line in enumerate(handle, 1):
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"{path}:{line_number}: invalid JSON") from exc
+            if not isinstance(payload, dict):
+                raise ValueError(f"{path}:{line_number}: expected JSON object")
+            if payload.get("split") == split:
+                count += 1
+    return count
+
+
 def _read_json_object(path: Path) -> dict[str, Any]:
     if not path.exists():
         raise FileNotFoundError(path)
@@ -84,19 +104,20 @@ def build_language_plan(
     audit = corpus / "audit.jsonl"
     train_rows = _jsonl_rows(train)
     validation_rows = _jsonl_rows(validation)
-    internal_test_rows = sum(
-        1
-        for line in audit.read_text(encoding="utf-8").splitlines()
-        if line.strip() and json.loads(line).get("split") == "test"
-    ) if audit.exists() else 0
+    internal_test_rows = _audit_split_rows(audit, "test")
     if train_rows < 1:
         raise ValueError(f"frozen corpus has no training rows: {train}")
 
     external_corpus = artifacts_root / language / "asr" / "corpus-v0-eval"
     external_version_path = external_corpus / "dataset_version.json"
     external_audit = external_corpus / "audit.jsonl"
-    external_rows = _jsonl_rows(external_audit)
+    external_rows = _audit_split_rows(external_audit, "test")
     external_version = _read_json_object(external_version_path) if external_version_path.exists() else None
+    if external_version is not None and int(external_version.get("accepted", 0)) != external_rows:
+        raise ValueError(
+            f"external evaluation version/audit row mismatch for {language}: "
+            f"accepted={external_version.get('accepted')} test_rows={external_rows}"
+        )
     if require_external_eval and external_rows < 1:
         raise ValueError(f"external evaluation is required but unavailable for {language}: {external_corpus}")
 
@@ -232,38 +253,55 @@ def build_language_plan(
     }
 
 
+def _write_result(run_dir: Path, result: dict[str, Any]) -> None:
+    (run_dir / "RUN_RESULT.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def _execute_plan(plan: dict[str, Any]) -> dict[str, Any]:
-    """Execute a prevalidated run sequentially and leave durable lineage before the first GPU operation."""
+    """Execute a prevalidated run sequentially and persist success or failure lineage."""
     run_dir = Path(str(plan["run_dir"]))
     if run_dir.exists() and any(run_dir.iterdir()):
         raise RuntimeError(f"refusing to overwrite an existing experiment: {run_dir}")
     run_dir.mkdir(parents=True, exist_ok=True)
-    started = {**plan, "status": "running", "started_at": _now()}
+    started_at = _now()
+    started = {**plan, "status": "running", "started_at": started_at}
     (run_dir / "RUN_PLAN.json").write_text(json.dumps(started, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    subprocess.run([str(item) for item in plan["train_command"]], check=True)
-    subprocess.run([str(item) for item in plan["export_command"]], check=True)
     completed_evaluations: list[dict[str, Any]] = []
-    for evaluation in plan["evaluations"]:
-        subprocess.run([str(item) for item in evaluation["command"]], check=True)
-        completed_evaluations.append(
-            {
-                "name": evaluation["name"],
-                "rows": evaluation["rows"],
-                "output": str(run_dir / f"{evaluation['name']}.json"),
-            }
-        )
+    try:
+        subprocess.run([str(item) for item in plan["train_command"]], check=True)
+        subprocess.run([str(item) for item in plan["export_command"]], check=True)
+        for evaluation in plan["evaluations"]:
+            subprocess.run([str(item) for item in evaluation["command"]], check=True)
+            completed_evaluations.append(
+                {
+                    "name": evaluation["name"],
+                    "rows": evaluation["rows"],
+                    "output": str(run_dir / f"{evaluation['name']}.json"),
+                }
+            )
+    except BaseException as exc:
+        failed = {
+            **plan,
+            "status": "failed",
+            "started_at": started_at,
+            "failed_at": _now(),
+            "error": f"{type(exc).__name__}:{exc}",
+            "completed_evaluations": completed_evaluations,
+        }
+        _write_result(run_dir, failed)
+        raise
 
     result = {
         **plan,
         "status": "completed",
-        "started_at": started["started_at"],
+        "started_at": started_at,
         "completed_at": _now(),
         "completed_evaluations": completed_evaluations,
         "hf_final": str(run_dir / "hf" / "final"),
         "ct2_model": str(run_dir / "ct2"),
     }
-    (run_dir / "RUN_RESULT.json").write_text(json.dumps(result, ensure_ascii=False, indent=2), encoding="utf-8")
+    _write_result(run_dir, result)
     return result
 
 
