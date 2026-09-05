@@ -2,7 +2,7 @@
 
 from pathlib import Path
 
-from training.data.acquire import dry_run_plan, resolve_revision
+from training.data.acquire import dry_run_plan, resolve_revision, target_sample_rate
 from training.data.bootstrap_plan import BootstrapPlan
 from training.data.catalog import DataSource, SourceCatalog
 from training.data.hf_parquet import required_parquet_columns
@@ -30,6 +30,14 @@ def test_dry_run_exposes_pinned_revisions() -> None:
     assert by_source["waxal_akan_asr"]["revision"] == "5f4d8ca24f2b9d168b2ee545f1febaaff4b40580"
     assert by_source["twi_words_400k"]["revision"] == "e808e3c75f31d306b33f7adb79a22f5aa3ea28f1"
     assert by_source["waxal_akan_eval"]["role"] == "eval"
+
+
+def test_bootstrap_sample_rate_follows_model_task_profile() -> None:
+    """ASR must stay at Whisper's 16 kHz while TTS preserves the profile's higher-bandwidth 22.05 kHz audio."""
+    profiles = ROOT / "training/configs/languages"
+    for language in ("tw", "gaa", "ee", "ha"):
+        assert target_sample_rate(language=language, task="asr", profiles_dir=profiles) == 16000
+        assert target_sample_rate(language=language, task="tts", profiles_dir=profiles) == 22050
 
 
 def test_production_plan_excludes_research_only_sources() -> None:
