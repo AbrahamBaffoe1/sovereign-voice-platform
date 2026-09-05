@@ -27,6 +27,7 @@ class DataSource:
     revision: str | None = None
     config: str | None = None
     split: str = "train"
+    data_files_glob: str | None = None
     fields: dict[str, str] = field(default_factory=dict)
     governance_approved: bool = False
     upstream_validated: bool = False
@@ -71,6 +72,9 @@ class SourceCatalog:
             fields = raw.get("fields") or {}
             if not isinstance(fields, dict):
                 raise ValueError(f"{path}: source {source_id!r}.fields must be a mapping")
+            data_files_glob = str(raw["data_files_glob"]).strip() if raw.get("data_files_glob") else None
+            if data_files_glob and not str(raw.get("repo_id") or "").strip():
+                raise ValueError(f"{path}: source {source_id!r} data_files_glob requires repo_id")
             self.sources[str(source_id)] = DataSource(
                 source_id=str(source_id),
                 provider=str(raw.get("provider", "")).strip(),
@@ -78,6 +82,7 @@ class SourceCatalog:
                 revision=str(raw["revision"]).strip() if raw.get("revision") else None,
                 config=str(raw["config"]).strip() if raw.get("config") else None,
                 split=str(raw.get("split", "train")).strip(),
+                data_files_glob=data_files_glob,
                 languages=languages,
                 tasks=raw_tasks,  # type: ignore[arg-type]
                 usage=usage,  # type: ignore[arg-type]
