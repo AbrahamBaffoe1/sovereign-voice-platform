@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from argparse import Namespace
 from pathlib import Path
 
 import numpy as np
@@ -12,6 +13,7 @@ from training.asr.finetune_whisper import (
     _latest_checkpoint,
     _read_frozen_wav,
     _resolve_resume_checkpoint,
+    _training_argument_values,
 )
 
 
@@ -42,3 +44,21 @@ def test_frozen_wav_reader_rechecks_compiler_audio_contract(tmp_path: Path) -> N
     sf.write(stereo, np.zeros((1600, 2), dtype=np.float32), 16000, subtype="PCM_16")
     with pytest.raises(ValueError, match="expected mono"):
         _read_frozen_wav(stereo)
+
+
+def test_whisper_uses_non_reentrant_gradient_checkpointing(tmp_path: Path) -> None:
+    """Shared encoder states must not enter PyTorch's graph-reentrant checkpoint path."""
+    args = Namespace(
+        output=tmp_path / "hf",
+        batch_size=8,
+        gradient_accumulation=2,
+        learning_rate=1e-5,
+        max_steps=4000,
+        fp16=True,
+        bf16=False,
+    )
+
+    values = _training_argument_values(args, has_validation=True)
+
+    assert values["gradient_checkpointing"] is True
+    assert values["gradient_checkpointing_kwargs"] == {"use_reentrant": False}

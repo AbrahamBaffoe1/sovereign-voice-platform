@@ -134,6 +134,45 @@ def _resolve_resume_checkpoint(output: Path, requested: str | None) -> str | Non
     return str(path)
 
 
+def _training_argument_values(args: argparse.Namespace, *, has_validation: bool) -> dict[str, Any]:
+    """Build the stable Trainer policy without importing the heavyweight Transformers runtime."""
+    values: dict[str, Any] = {
+        "output_dir": str(args.output),
+        "per_device_train_batch_size": args.batch_size,
+        "per_device_eval_batch_size": max(1, args.batch_size // 2),
+        "gradient_accumulation_steps": args.gradient_accumulation,
+        "learning_rate": args.learning_rate,
+        "warmup_steps": min(500, max(50, args.max_steps // 10)),
+        "max_steps": args.max_steps,
+        "gradient_checkpointing": True,
+        # Whisper decoder layers share encoder states. PyTorch's reentrant checkpoint engine may try
+        # to traverse that shared graph more than once during a single backward pass. The recommended
+        # non-reentrant engine records the forward graph and handles this topology correctly.
+        "gradient_checkpointing_kwargs": {"use_reentrant": False},
+        "fp16": args.fp16,
+        "bf16": args.bf16,
+        "eval_strategy": "steps" if has_validation else "no",
+        "save_strategy": "steps",
+        "save_steps": 250,
+        "logging_steps": 25,
+        "predict_with_generate": has_validation,
+        "generation_max_length": 225,
+        "load_best_model_at_end": has_validation,
+        "save_total_limit": 3,
+        "report_to": ["tensorboard"],
+        "remove_unused_columns": False,
+    }
+    if has_validation:
+        values.update(
+            {
+                "eval_steps": 250,
+                "metric_for_best_model": "wer",
+                "greater_is_better": False,
+            }
+        )
+    return values
+
+
 def _read_frozen_wav(path: str | Path, *, required_sample_rate: int = 16000) -> np.ndarray:
     """Read the compiler-owned WAV directly and re-check the ASR audio contract at the training boundary."""
     waveform, sample_rate = sf.read(str(path), dtype="float32", always_2d=False)
@@ -247,36 +286,7 @@ def main() -> None:
     )
     args.output.mkdir(parents=True, exist_ok=True)
     has_validation = validation_path is not None
-    training_kwargs: dict[str, Any] = {
-        "output_dir": str(args.output),
-        "per_device_train_batch_size": args.batch_size,
-        "per_device_eval_batch_size": max(1, args.batch_size // 2),
-        "gradient_accumulation_steps": args.gradient_accumulation,
-        "learning_rate": args.learning_rate,
-        "warmup_steps": min(500, max(50, args.max_steps // 10)),
-        "max_steps": args.max_steps,
-        "gradient_checkpointing": True,
-        "fp16": args.fp16,
-        "bf16": args.bf16,
-        "eval_strategy": "steps" if has_validation else "no",
-        "save_strategy": "steps",
-        "save_steps": 250,
-        "logging_steps": 25,
-        "predict_with_generate": has_validation,
-        "generation_max_length": 225,
-        "load_best_model_at_end": has_validation,
-        "save_total_limit": 3,
-        "report_to": ["tensorboard"],
-        "remove_unused_columns": False,
-    }
-    if has_validation:
-        training_kwargs.update(
-            {
-                "eval_steps": 250,
-                "metric_for_best_model": "wer",
-                "greater_is_better": False,
-            }
-        )
+    training_kwargs = _training_argument_values(args, has_validation=has_validation)
     training_args = Seq2SeqTrainingArguments(**training_kwargs)
     trainer = Seq2SeqTrainer(
         model=model,
@@ -318,6 +328,7 @@ def main() -> None:
                 "max_steps": args.max_steps,
                 "batch_size": args.batch_size,
                 "gradient_accumulation": args.gradient_accumulation,
+                "gradient_checkpointing": {"enabled": True, "use_reentrant": False},
                 "learning_rate": args.learning_rate,
                 "fp16": args.fp16,
                 "bf16": args.bf16,
