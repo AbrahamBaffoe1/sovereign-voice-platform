@@ -28,16 +28,16 @@ asr = [
 ]
 tts-chatterbox = [
   "chatterbox-tts>=0.1",
-  "torch>=2.6",
-  "torchaudio>=2.6",
+  "torch>=2.6,<2.7",
+  "torchaudio>=2.6,<2.7",
 ]
 tts-voxcpm = [
   "voxcpm>=2.0,<3",
-  "torch>=2.5",
+  "torch>=2.5,<2.7",
 ]
 tts-nemo = [
   "nemo_toolkit[tts]>=2.4",
-  "torch>=2.6",
+  "torch>=2.6,<2.7",
 ]
 data = [
   "datasets>=4,<5",
@@ -51,7 +51,7 @@ training-asr = [
   "accelerate>=1.10,<2",
   "jiwer>=4,<5",
   "tensorboard>=2.21,<3",
-  "torch>=2.6",
+  "torch>=2.6,<2.7",
 ]
 training = [
   "librosa>=0.11,<1",

@@ -30,6 +30,7 @@ A task is marked done only when its implementation and a repeatable verification
 - [x] Blind native-speaker TTS listening evaluation aggregation.
 - [x] Strict TypeScript HTTP/WebSocket SDK.
 - [x] GitHub compile/Ruff/pytest/SDK CI.
+- [x] Reproducible PyTorch 2.6/CUDA 12.4 RunPod dependency constraint and GPU compatibility gate.
 
 ## IN MOTION — public corpus-v0
 

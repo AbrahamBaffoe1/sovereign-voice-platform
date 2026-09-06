@@ -73,6 +73,7 @@ volume mount:       /workspace
 container disk:     30 GiB
 pod name:           sovereign-voice-twi
 execution language: Twi first
+container image:    PyTorch 2.4 / Python 3.11 / CUDA 12.4.1
 ```
 
 Optional overrides:
@@ -81,6 +82,7 @@ Optional overrides:
 export RUNPOD_VOLUME_SIZE_GB=300
 export RUNPOD_POD_NAME=sovereign-voice-twi-v1
 export RUNPOD_VOLUME_NAME=sovereign-voice-data-v1
+export RUNPOD_IMAGE=runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 ```
 
 The script prints the resulting `POD_ID` and `VOLUME_ID` and does not write your API key to disk.
@@ -118,6 +120,9 @@ bash scripts/runpod_bootstrap.sh
 ```
 
 The pipeline then owns acquisition, corpus-v0 freezing, leakage checks, TTS readiness evidence, Whisper-small training/resume, CTranslate2 export, and ASR evaluation.
+
+The bootstrap defaults to the reviewed `constraints/training-cu124.txt` dependency policy and refuses
+to start corpus work unless PyTorch resolves CUDA 12.4 and can access the assigned NVIDIA GPU.
 
 ## 7. Stop compute without losing training state
 

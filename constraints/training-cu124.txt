@@ -1,0 +1,6 @@
+# Reproducible production training stack for the RunPod CUDA 12.4 lane.
+#
+# Keep torch and torchaudio on the same release. PyTorch 2.6.0's Linux wheels
+# resolve the CUDA 12.4 runtime libraries used by the verified A40 deployment.
+torch==2.6.0
+torchaudio==2.6.0

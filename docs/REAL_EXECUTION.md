@@ -30,6 +30,10 @@ The 150 GiB value is an operator safety floor, not a claim about final corpus si
 
 The launcher keeps its virtual environment and dependency snapshot on the persistent volume. Recreating the cloud machine therefore does not force corpus acquisition or ASR training to restart from zero.
 
+The production launcher also applies `constraints/training-cu124.txt` so a future PyTorch release
+cannot silently move the RunPod environment to an incompatible CUDA major version. Operators testing
+another reviewed CUDA stack must set `PIP_CONSTRAINT` and `EXPECTED_TORCH_CUDA` together.
+
 ## Persistent layout
 
 ```text
@@ -43,6 +47,7 @@ The launcher keeps its virtual environment and dependency snapshot on the persis
   state/EXECUTION_ENVIRONMENT.json
   state/REAL_EXECUTION.json
   state/pip-freeze.txt
+  state/pip-constraint.txt
   state/execution.lock
   venv/
 ```

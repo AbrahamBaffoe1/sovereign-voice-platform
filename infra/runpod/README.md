@@ -15,7 +15,7 @@ Preferred order:  A40 / RTX A6000 / RTX 6000 Ada / L40S
 CPU/RAM:          use the Pod allocation paired with the selected GPU
 Persistent disk:  >= 200 GB
 Volume mount:     /workspace
-Container:        current RunPod/PyTorch CUDA image or equivalent Python 3.11 CUDA image
+Container:        runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04
 ```
 
 The training code is GPU-SKU neutral. Prefer the least-cost available 48-GB card; move to A100/H100 only after measured throughput shows the cheaper class is the bottleneck.
@@ -55,6 +55,11 @@ bash scripts/runpod_bootstrap.sh
 
 The bootstrap creates/reuses a persistent source checkout and then hands execution to `scripts/run_real_training.sh`.
 
+The launcher applies `constraints/training-cu124.txt` by default. That policy pins PyTorch 2.6 to
+CUDA 12.4, verifies that `torch.cuda` sees the assigned GPU, and stores both the resolved environment
+and the applied constraint under `state/`. A different reviewed stack must provide both a local
+`PIP_CONSTRAINT` file and the matching `EXPECTED_TORCH_CUDA` value.
+
 The child launcher performs the real machine preflight before corpus/model work:
 
 ```text
@@ -86,6 +91,7 @@ Everything that matters survives Pod replacement under:
   state/EXECUTION_ENVIRONMENT.json
   state/REAL_EXECUTION.json
   state/pip-freeze.txt
+  state/pip-constraint.txt
   state/execution.lock
   venv/
 ```

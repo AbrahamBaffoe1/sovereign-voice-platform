@@ -12,7 +12,9 @@ set -Eeuo pipefail
 RUNPOD_VOLUME_SIZE_GB="${RUNPOD_VOLUME_SIZE_GB:-200}"
 RUNPOD_POD_NAME="${RUNPOD_POD_NAME:-sovereign-voice-twi}"
 RUNPOD_VOLUME_NAME="${RUNPOD_VOLUME_NAME:-sovereign-voice-data}"
-RUNPOD_IMAGE="${RUNPOD_IMAGE:-runpod/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04}"
+# This CUDA 12.4 image is the verified A40 baseline. The persistent launcher installs the constrained
+# torch 2.6/cu124 training environment rather than inheriting an unbounded system PyTorch release.
+RUNPOD_IMAGE="${RUNPOD_IMAGE:-runpod/pytorch:2.4.0-py3.11-cuda12.4.1-devel-ubuntu22.04}"
 RUNPOD_CONTAINER_DISK_GB="${RUNPOD_CONTAINER_DISK_GB:-30}"
 
 if ! command -v runpodctl >/dev/null 2>&1; then
