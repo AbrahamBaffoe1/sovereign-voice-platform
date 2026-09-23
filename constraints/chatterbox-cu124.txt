@@ -1,0 +1,9 @@
+# Reproducible Chatterbox TTS stack for the RunPod CUDA 12.4 lane.
+#
+# Chatterbox 0.1.7 intentionally lives in a separate virtual environment from
+# ASR training because it pins Transformers 5.x and NumPy 1.x compatibility.
+chatterbox-tts==0.1.7
+numpy==1.26.4
+torch==2.6.0
+torchaudio==2.6.0
+transformers==5.2.0

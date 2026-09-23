@@ -34,15 +34,21 @@ pip install -e '.[asr,dev]'
 make run
 ```
 
-Install only the extras needed for the job:
+Install only the extras needed for the job. ASR training and neural TTS adapters
+use separate environments because they intentionally resolve different model
+tooling lanes:
 
 ```bash
-pip install -e '.[data]'            # public dataset acquisition
-pip install -e '.[training-asr]'    # Whisper training
-pip install -e '.[tts-chatterbox]'
+make install-asr                    # Whisper training + data tools
+make install-tts-chatterbox         # Chatterbox TTS only
+pip install -e '.[data]'            # public dataset acquisition only
 pip install -e '.[tts-nemo]'
 pip install -e '.[tts-voxcpm]'
 ```
+
+Do not install `training-asr` with `tts-chatterbox` or `tts-voxcpm` in the same
+virtual environment. The production ASR launcher uses `constraints/training-cu124.txt`;
+the Chatterbox lane uses `constraints/chatterbox-cu124.txt`.
 
 ## Public bootstrap corpus v0
 

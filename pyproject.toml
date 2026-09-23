@@ -14,7 +14,7 @@ dependencies = [
   "pydantic-settings>=2.10,<3",
   "httpx>=0.28,<1",
   "python-multipart>=0.0.20,<1",
-  "numpy>=2.0,<3",
+  "numpy>=1.26,<3",
   "soundfile>=0.13,<1",
   "PyYAML>=6.0,<7",
   "orjson>=3.10,<4",
@@ -27,7 +27,7 @@ asr = [
   "faster-whisper>=1.2,<2",
 ]
 tts-chatterbox = [
-  "chatterbox-tts>=0.1",
+  "chatterbox-tts>=0.1.7,<0.2",
   "torch>=2.6,<2.7",
   "torchaudio>=2.6,<2.7",
 ]
@@ -45,7 +45,7 @@ data = [
   "pyarrow>=21,<26",
 ]
 training-asr = [
-  "transformers>=4.55,<6",
+  "transformers>=4.55,<5",
   "datasets>=4,<5",
   "evaluate>=0.4,<1",
   "accelerate>=1.10,<2",
@@ -72,6 +72,26 @@ packages = ["services/api/app", "training"]
 [tool.ruff]
 line-length = 120
 target-version = "py311"
+
+[tool.uv]
+conflicts = [
+  [
+    { extra = "training-asr" },
+    { extra = "tts-chatterbox" },
+  ],
+  [
+    { extra = "data" },
+    { extra = "tts-chatterbox" },
+  ],
+  [
+    { extra = "data" },
+    { extra = "tts-voxcpm" },
+  ],
+  [
+    { extra = "training-asr" },
+    { extra = "tts-voxcpm" },
+  ],
+]
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F", "UP", "B"]

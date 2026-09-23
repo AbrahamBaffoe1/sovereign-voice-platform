@@ -6,14 +6,26 @@ EXECUTION_ROOT ?= /srv/sovereign-voice
 MIN_FREE_GB ?= 0
 LANGUAGE ?= all
 TASK ?= both
+PYTHON_BIN ?= python3.11
+ASR_VENV ?= .venvs/asr
+CHATTERBOX_VENV ?= .venvs/tts-chatterbox
 
-.PHONY: install install-all data-install dev test lint typecheck run compose-up compose-down validate corpus-plan corpus-v0 corpus-v0-strict asr-plan asr-baseline asr-baseline-strict tts-readiness tts-readiness-strict real-execution real-execution-strict
+.PHONY: install install-asr install-tts-chatterbox data-install dev test lint typecheck run compose-up compose-down validate corpus-plan corpus-v0 corpus-v0-strict asr-plan asr-baseline asr-baseline-strict tts-readiness tts-readiness-strict real-execution real-execution-strict
 
 install:
 	python -m pip install -e .
 
-install-all:
-	python -m pip install -e '.[asr,tts-chatterbox,data,training,training-asr,dev]'
+install-asr:
+	$(PYTHON_BIN) -m venv $(ASR_VENV)
+	$(ASR_VENV)/bin/python -m pip install --upgrade pip wheel
+	PIP_CONSTRAINT=constraints/training-cu124.txt $(ASR_VENV)/bin/python -m pip install -e '.[asr,data,training,training-asr,dev]'
+	$(ASR_VENV)/bin/python -m pip check
+
+install-tts-chatterbox:
+	$(PYTHON_BIN) -m venv $(CHATTERBOX_VENV)
+	$(CHATTERBOX_VENV)/bin/python -m pip install --upgrade pip wheel
+	PIP_CONSTRAINT=constraints/chatterbox-cu124.txt $(CHATTERBOX_VENV)/bin/python -m pip install -e '.[tts-chatterbox]'
+	$(CHATTERBOX_VENV)/bin/python -m pip check
 
 data-install:
 	python -m pip install -e '.[data]'

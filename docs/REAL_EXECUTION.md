@@ -34,6 +34,12 @@ The production launcher also applies `constraints/training-cu124.txt` so a futur
 cannot silently move the RunPod environment to an incompatible CUDA major version. Operators testing
 another reviewed CUDA stack must set `PIP_CONSTRAINT` and `EXPECTED_TORCH_CUDA` together.
 
+Keep this ASR virtual environment dedicated to Whisper training and evaluation.
+Chatterbox TTS has its own CUDA 12.4 constraint in `constraints/chatterbox-cu124.txt`
+because it resolves a different Transformers and NumPy lane. VoxCPM2 should also
+be resolved outside the ASR/data environment because its dataset tooling currently
+uses a different major range.
+
 ## Persistent layout
 
 ```text
