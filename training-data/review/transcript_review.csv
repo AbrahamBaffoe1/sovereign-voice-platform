@@ -1,0 +1,21 @@
+audio,source_id,speaker,language,dialect,duration_seconds,text,transcript_reviewed,review_notes
+training-data/1.opus,team-tw-001-001,team_tw_speaker_001,tw,,14.5135,,false,Exact Twi transcript needed.
+training-data/2.opus,team-tw-001-002,team_tw_speaker_001,tw,,9.6535,,false,Exact Twi transcript needed.
+training-data/3.opus,team-tw-001-003,team_tw_speaker_001,tw,,15.1335,,false,Exact Twi transcript needed.
+training-data/4.opus,team-tw-001-004,team_tw_speaker_001,tw,,16.0735,,false,Exact Twi transcript needed.
+training-data/5.opus,team-tw-001-005,team_tw_speaker_001,tw,,10.7335,,false,Exact Twi transcript needed.
+training-data/6.opus,team-tw-001-006,team_tw_speaker_001,tw,,10.6335,,false,Exact Twi transcript needed.
+training-data/7.opus,team-tw-001-007,team_tw_speaker_001,tw,,12.6535,,false,Exact Twi transcript needed.
+training-data/8.opus,team-tw-001-008,team_tw_speaker_001,tw,,13.7535,,false,Exact Twi transcript needed.
+training-data/9.opus,team-tw-001-009,team_tw_speaker_001,tw,,17.4935,,false,Exact Twi transcript needed.
+training-data/10.opus,team-tw-001-010,team_tw_speaker_001,tw,,20.2335,,false,Exact Twi transcript needed. Split at an utterance boundary before corpus import; exceeds 20 seconds.
+training-data/11.opus,team-tw-001-011,team_tw_speaker_001,tw,,14.5135,,false,Exact Twi transcript needed.
+training-data/12.opus,team-tw-001-012,team_tw_speaker_001,tw,,13.0935,,false,Exact Twi transcript needed.
+training-data/13.opus,team-tw-001-013,team_tw_speaker_001,tw,,16.3335,,false,Exact Twi transcript needed.
+training-data/14.opus,team-tw-001-014,team_tw_speaker_001,tw,,11.8935,,false,Exact Twi transcript needed.
+training-data/15.opus,team-tw-001-015,team_tw_speaker_001,tw,,16.1135,,false,Exact Twi transcript needed.
+training-data/16.opus,team-tw-001-016,team_tw_speaker_001,tw,,15.2335,,false,Exact Twi transcript needed.
+training-data/17.opus,team-tw-001-017,team_tw_speaker_001,tw,,9.6735,,false,Exact Twi transcript needed.
+training-data/18.opus,team-tw-001-018,team_tw_speaker_001,tw,,10.0935,,false,Exact Twi transcript needed.
+training-data/19.opus,team-tw-001-019,team_tw_speaker_001,tw,,13.3135,,false,Exact Twi transcript needed.
+training-data/20.opus,team-tw-001-020,team_tw_speaker_001,tw,,13.2735,,false,Exact Twi transcript needed.
