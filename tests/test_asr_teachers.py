@@ -99,3 +99,26 @@ def test_pseudo_label_rejects_evaluation_only_contract(tmp_path: Path) -> None:
     )
     with pytest.raises(ValueError, match="non-train split"):
         _training_rows(manifest, limit=None)
+
+
+def test_teacher_comparison_rejects_misaligned_predictions(tmp_path: Path) -> None:
+    from training.asr.compare_teachers import compare_predictions
+
+    left = tmp_path / "left.jsonl"
+    right = tmp_path / "right.jsonl"
+    _write_jsonl(left, ['{"audio_filepath":"a.wav","reference":"x","hypothesis":"x","teacher_confidence":0.9,"audio_seconds":1,"latency_seconds":0.1}'])
+    _write_jsonl(right, ['{"audio_filepath":"b.wav","reference":"x","hypothesis":"x","teacher_confidence":0.9,"audio_seconds":1,"latency_seconds":0.1}'])
+    with pytest.raises(ValueError, match="alignment mismatch"):
+        compare_predictions(left, right)
+
+
+def test_teacher_comparison_confidence_selector_uses_higher_confidence(tmp_path: Path) -> None:
+    from training.asr.compare_teachers import compare_predictions
+
+    left = tmp_path / "left.jsonl"
+    right = tmp_path / "right.jsonl"
+    _write_jsonl(left, ['{"audio_filepath":"a.wav","reference":"hello","hypothesis":"wrong","teacher_confidence":0.2,"audio_seconds":1,"latency_seconds":0.1}'])
+    _write_jsonl(right, ['{"audio_filepath":"a.wav","reference":"hello","hypothesis":"hello","teacher_confidence":0.9,"audio_seconds":1,"latency_seconds":0.1}'])
+    report = compare_predictions(left, right)
+    assert report["confidence_selected"]["right_selected"] == 1
+    assert report["confidence_selected"]["metrics"]["global"]["wer"] == 0.0
