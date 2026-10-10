@@ -33,6 +33,8 @@ def build_distillation_manifest(
     source_rows = read_jsonl(source_manifest)
     pseudo_rows = read_jsonl(pseudo_manifest)
     held_out = _eval_hashes(frozen_eval_hashes)
+    source_manifest_sha256 = file_sha256(source_manifest)
+    pseudo_manifest_sha256 = file_sha256(pseudo_manifest)
     by_audio: dict[str, dict[str, object]] = {}
     for row in source_rows:
         audio_path = str(row.get("audio_path") or row.get("audio_filepath") or "")
@@ -87,8 +89,8 @@ def build_distillation_manifest(
                 "source_repository": source.get("source_repository"),
                 "source_revision": source.get("source_revision"),
                 "source_license": source.get("license"),
-                "source_manifest_sha256": file_sha256(source_manifest),
-                "pseudo_manifest_sha256": file_sha256(pseudo_manifest),
+                "source_manifest_sha256": source_manifest_sha256,
+                "pseudo_manifest_sha256": pseudo_manifest_sha256,
             }
         )
         seen_hashes.add(audio_hash)
@@ -100,9 +102,9 @@ def build_distillation_manifest(
     lineage = {
         "schema_version": 1,
         "source_manifest": str(source_manifest),
-        "source_manifest_sha256": file_sha256(source_manifest),
+        "source_manifest_sha256": source_manifest_sha256,
         "pseudo_manifest": str(pseudo_manifest),
-        "pseudo_manifest_sha256": file_sha256(pseudo_manifest),
+        "pseudo_manifest_sha256": pseudo_manifest_sha256,
         "frozen_eval_hashes": str(frozen_eval_hashes),
         "frozen_eval_hashes_sha256": file_sha256(frozen_eval_hashes),
         "source_rows": len(source_rows),
