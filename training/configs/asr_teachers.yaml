@@ -14,7 +14,7 @@ teachers:
     family: ctc
     language: tw
     access: public
-    license: review_upstream
+    license: MIT
     role: code_switch_candidate
     notes: Twi/Akan/English-oriented candidate; benchmark independently before ensemble use.
   sunflower-51-african-languages:
