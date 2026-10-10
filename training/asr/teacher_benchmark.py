@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import time
 from pathlib import Path
 from typing import Any
@@ -17,12 +18,27 @@ from training.common.manifest import file_sha256, read_jsonl
 
 
 def _load_audio(path: Path, *, sample_rate: int = 16000) -> tuple[np.ndarray, float]:
-    waveform, sr = sf.read(str(path), dtype="float32", always_2d=False)
-    if sr != sample_rate:
-        raise ValueError(f"{path}: expected {sample_rate} Hz, found {sr}")
-    if waveform.ndim != 1 or not np.isfinite(waveform).all():
-        raise ValueError(f"{path}: invalid mono waveform")
-    return np.asarray(waveform, dtype=np.float32), len(waveform) / float(sr)
+    """Decode one utterance, falling back to ffmpeg for formats unavailable in libsndfile."""
+    try:
+        waveform, sr = sf.read(str(path), dtype="float32", always_2d=False)
+        if sr != sample_rate:
+            raise ValueError(f"{path}: expected {sample_rate} Hz, found {sr}")
+        if waveform.ndim != 1 or not np.isfinite(waveform).all():
+            raise ValueError(f"{path}: invalid mono waveform")
+        array = np.asarray(waveform, dtype=np.float32)
+    except (RuntimeError, ValueError):
+        process = subprocess.run(
+            [
+                "ffmpeg", "-nostdin", "-v", "error", "-i", str(path),
+                "-f", "f32le", "-acodec", "pcm_f32le", "-ac", "1", "-ar", str(sample_rate), "pipe:1",
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+        )
+        array = np.frombuffer(process.stdout, dtype=np.float32).copy()
+        if not len(array) or not np.isfinite(array).all():
+            raise ValueError(f"{path}: ffmpeg produced invalid audio") from None
+    return array, len(array) / float(sample_rate)
 
 
 def _manifest_rows(path: Path, *, split: str | None, limit: int | None) -> list[dict[str, object]]:
@@ -31,9 +47,12 @@ def _manifest_rows(path: Path, *, split: str | None, limit: int | None) -> list[
     for row in rows:
         if split is not None and row.get("split") != split:
             continue
-        if not row.get("audio_filepath") or row.get("text") is None:
-            raise ValueError(f"{path}: row missing audio_filepath/text")
-        selected.append(row)
+        audio_path = row.get("audio_filepath") or row.get("audio_path")
+        if not audio_path or row.get("text") is None:
+            raise ValueError(f"{path}: row missing audio path/text")
+        normalized = dict(row)
+        normalized["audio_filepath"] = str(audio_path)
+        selected.append(normalized)
         if limit is not None and len(selected) >= limit:
             break
     if not selected:
@@ -107,6 +126,7 @@ def run_benchmark(
     split: str | None = "test",
     limit: int | None = None,
     device: str = "auto",
+    model_source: str | None = None,
 ) -> dict[str, object]:
     """Run one immutable teacher benchmark and persist row-level and aggregate evidence."""
     teacher = get_teacher(teacher_name)
@@ -115,7 +135,8 @@ def run_benchmark(
     if teacher.family != "ctc":
         raise RuntimeError(f"teacher family {teacher.family!r} is not implemented yet")
     rows = _manifest_rows(manifest, split=split, limit=limit)
-    processor, model, torch = _load_ctc_teacher(teacher.model_id, device)
+    resolved_model_source = model_source or teacher.model_id
+    processor, model, torch = _load_ctc_teacher(resolved_model_source, device)
     output_dir.mkdir(parents=True, exist_ok=True)
     predictions_path = output_dir / "predictions.jsonl"
     benchmark_rows: list[BenchmarkUtterance] = []
@@ -164,6 +185,7 @@ def run_benchmark(
         "schema_version": 1,
         "teacher": teacher.name,
         "model_id": teacher.model_id,
+        "model_source": resolved_model_source,
         "family": teacher.family,
         "language_prefix_id": teacher.language_prefix_id,
         "manifest": str(manifest),
@@ -186,6 +208,7 @@ def main() -> None:
     parser.add_argument("--split", default="test")
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--device", default="auto")
+    parser.add_argument("--model-source", default=None, help="Optional local checkpoint path for an already-cached teacher")
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         raise SystemExit("--limit must be positive")
@@ -198,6 +221,7 @@ def main() -> None:
                 split=args.split or None,
                 limit=args.limit,
                 device=args.device,
+                model_source=args.model_source,
             ),
             ensure_ascii=False,
             indent=2,

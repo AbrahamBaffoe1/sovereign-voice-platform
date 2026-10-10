@@ -29,7 +29,7 @@ def test_benchmark_selection_only_reads_requested_split(tmp_path: Path) -> None:
     manifest = tmp_path / "audit.jsonl"
     _write_jsonl(manifest, [
         '{"audio_filepath":"train.wav","text":"train","split":"train"}',
-        '{"audio_filepath":"test-a.wav","text":"a","split":"test"}',
+        '{"audio_path":"test-a.wav","text":"a","split":"test"}',
         '{"audio_filepath":"test-b.wav","text":"b","split":"test"}',
     ])
     rows = _manifest_rows(manifest, split="test", limit=1)
