@@ -22,6 +22,7 @@ class TeacherSpec:
     license: str | None = None
     blocked_reason: str | None = None
     notes: str | None = None
+    language_prefix_id: int | None = None
 
     @property
     def runnable(self) -> bool:
@@ -61,8 +62,20 @@ def load_teacher_registry(path: Path = Path("training/configs/asr_teachers.yaml"
             license=_optional(raw, "license"),
             blocked_reason=_optional(raw, "blocked_reason"),
             notes=_optional(raw, "notes"),
+            language_prefix_id=_optional_int(raw, "language_prefix_id"),
         )
     return resolved
+
+
+def _optional_int(payload: dict[str, Any], key: str) -> int | None:
+    """Return an optional non-negative integer field from the registry."""
+    value = payload.get(key)
+    if value is None:
+        return None
+    parsed = int(value)
+    if parsed < 0:
+        raise ValueError(f"{key} must be non-negative")
+    return parsed
 
 
 def _optional(payload: dict[str, Any], key: str) -> str | None:

@@ -3,7 +3,7 @@ from pathlib import Path
 import pytest
 
 from training.asr.pseudo_label import _training_rows
-from training.asr.teacher_benchmark import _manifest_rows
+from training.asr.teacher_benchmark import _apply_language_prefix, _manifest_rows
 from training.asr.teacher_registry import get_teacher, load_teacher_registry
 
 
@@ -14,6 +14,7 @@ def _write_jsonl(path: Path, rows: list[str]) -> None:
 def test_teacher_registry_exposes_public_and_gated_candidates() -> None:
     teachers = load_teacher_registry()
     assert teachers["dondo-twi-v2"].runnable is True
+    assert teachers["dondo-twi-v2"].language_prefix_id == 2
     assert teachers["tubastt-twi-en-v0.5"].family == "ctc"
     assert teachers["sunflower-51-african-languages"].runnable is False
     assert "approval" in (teachers["sunflower-51-african-languages"].blocked_reason or "").lower()
@@ -50,3 +51,16 @@ def test_pseudo_label_input_accepts_train_only_manifest_without_split_field(tmp_
     _write_jsonl(manifest, ['{"audio_filepath":"a.wav","text":"human"}'])
     rows = _training_rows(manifest, limit=None)
     assert len(rows) == 1
+
+
+def test_dondo_language_prefix_prepends_one_hot_feature_frame() -> None:
+    torch = pytest.importorskip("torch")
+    inputs = {
+        "input_features": torch.zeros((1, 3, 8)),
+        "attention_mask": torch.ones((1, 3), dtype=torch.long),
+    }
+    prefixed = _apply_language_prefix(inputs, torch, 2)
+    assert tuple(prefixed["input_features"].shape) == (1, 4, 8)
+    assert prefixed["input_features"][0, 0, 2].item() == 1.0
+    assert prefixed["input_features"][0, 0].sum().item() == 1.0
+    assert tuple(prefixed["attention_mask"].shape) == (1, 4)

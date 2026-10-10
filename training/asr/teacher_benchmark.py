@@ -57,11 +57,39 @@ def _load_ctc_teacher(model_id: str, device: str) -> tuple[Any, Any, Any]:
     return processor, model, torch
 
 
-def _ctc_transcribe(processor: Any, model: Any, torch: Any, waveform: np.ndarray) -> tuple[str, float]:
+def _apply_language_prefix(tensor_inputs: dict[str, Any], torch: Any, lang_id: int | None) -> dict[str, Any]:
+    """Prepend the DONDO one-hot acoustic language frame when a teacher declares one."""
+    if lang_id is None:
+        return tensor_inputs
+    features = tensor_inputs.get("input_features")
+    if features is None or features.ndim != 3:
+        raise ValueError("language-prefixed teacher requires batched input_features")
+    batch, frames, feature_dim = features.shape
+    if lang_id >= feature_dim:
+        raise ValueError(f"language prefix id {lang_id} exceeds feature dimension {feature_dim}")
+    prefix = torch.zeros((batch, 1, feature_dim), dtype=features.dtype, device=features.device)
+    prefix[:, 0, lang_id] = 1.0
+    tensor_inputs["input_features"] = torch.cat([prefix, features], dim=1)
+    mask = tensor_inputs.get("attention_mask")
+    if mask is not None and mask.ndim == 2 and mask.shape[1] == frames:
+        leading = torch.ones((batch, 1), dtype=mask.dtype, device=mask.device)
+        tensor_inputs["attention_mask"] = torch.cat([leading, mask], dim=1)
+    return tensor_inputs
+
+
+def _ctc_transcribe(
+    processor: Any,
+    model: Any,
+    torch: Any,
+    waveform: np.ndarray,
+    *,
+    language_prefix_id: int | None = None,
+) -> tuple[str, float]:
     """Decode one CTC utterance and return transcript plus mean frame posterior confidence."""
     resolved_device = next(model.parameters()).device
     inputs = processor(waveform, sampling_rate=16000, return_tensors="pt")
     tensor_inputs = {key: value.to(resolved_device) for key, value in inputs.items()}
+    tensor_inputs = _apply_language_prefix(tensor_inputs, torch, language_prefix_id)
     with torch.inference_mode():
         logits = model(**tensor_inputs).logits
         probabilities = torch.softmax(logits.float(), dim=-1)
@@ -96,7 +124,9 @@ def run_benchmark(
             audio_path = Path(str(row["audio_filepath"]))
             waveform, audio_seconds = _load_audio(audio_path)
             started = time.perf_counter()
-            hypothesis, confidence = _ctc_transcribe(processor, model, torch, waveform)
+            hypothesis, confidence = _ctc_transcribe(
+                processor, model, torch, waveform, language_prefix_id=teacher.language_prefix_id
+            )
             latency = time.perf_counter() - started
             utterance = BenchmarkUtterance(
                 reference=str(row["text"]),
@@ -135,6 +165,7 @@ def run_benchmark(
         "teacher": teacher.name,
         "model_id": teacher.model_id,
         "family": teacher.family,
+        "language_prefix_id": teacher.language_prefix_id,
         "manifest": str(manifest),
         "manifest_sha256": file_sha256(manifest),
         "split": split,
