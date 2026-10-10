@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import statistics
 import subprocess
 import time
 from pathlib import Path
@@ -13,7 +14,7 @@ import numpy as np
 import soundfile as sf
 
 from training.asr.teacher_registry import get_teacher
-from training.benchmarks.speech import BenchmarkUtterance, benchmark_report
+from training.benchmarks.speech import BenchmarkUtterance, benchmark_report, error_rate
 from training.common.manifest import file_sha256, read_jsonl
 
 
@@ -59,6 +60,38 @@ def _manifest_rows(path: Path, *, split: str | None, limit: int | None) -> list[
         raise ValueError(f"no benchmark rows selected from {path}")
     return selected
 
+
+
+def _normalized_error_summary(rows: list[BenchmarkUtterance], normalizer: Any) -> dict[str, float | int]:
+    """Aggregate WER/CER after an explicit text normalizer for compatibility comparisons."""
+    word_errors = reference_words = char_errors = reference_chars = exact = 0
+    for row in rows:
+        reference = str(normalizer(row.reference))
+        hypothesis = str(normalizer(row.hypothesis))
+        edits, total = error_rate(reference, hypothesis, unit="word")
+        word_errors += edits
+        reference_words += total
+        edits, total = error_rate(reference, hypothesis, unit="char")
+        char_errors += edits
+        reference_chars += total
+        exact += int(reference == hypothesis)
+    return {
+        "utterances": len(rows),
+        "word_errors": word_errors,
+        "reference_words": reference_words,
+        "char_errors": char_errors,
+        "reference_chars": reference_chars,
+        "wer": word_errors / reference_words if reference_words else float("nan"),
+        "cer": char_errors / reference_chars if reference_chars else float("nan"),
+        "sentence_accuracy": exact / len(rows) if rows else float("nan"),
+    }
+
+
+def _whisper_basic_summary(rows: list[BenchmarkUtterance]) -> dict[str, float | int]:
+    """Match the legacy Nexora/Whisper benchmark normalization for apples-to-apples gating."""
+    from transformers.models.whisper.english_normalizer import BasicTextNormalizer
+
+    return _normalized_error_summary(rows, BasicTextNormalizer())
 
 def _load_ctc_teacher(model_id: str, device: str) -> tuple[Any, Any, Any]:
     try:
@@ -140,6 +173,7 @@ def run_benchmark(
     output_dir.mkdir(parents=True, exist_ok=True)
     predictions_path = output_dir / "predictions.jsonl"
     benchmark_rows: list[BenchmarkUtterance] = []
+    confidences: list[float] = []
     with predictions_path.open("w", encoding="utf-8") as handle:
         for index, row in enumerate(rows, 1):
             audio_path = Path(str(row["audio_filepath"]))
@@ -160,6 +194,7 @@ def run_benchmark(
                 code_switch=str(row["code_switch"]) if row.get("code_switch") else None,
             )
             benchmark_rows.append(utterance)
+            confidences.append(confidence)
             handle.write(
                 json.dumps(
                     {
@@ -181,6 +216,13 @@ def run_benchmark(
             )
             print(f"[{index}/{len(rows)}] {audio_path.name}", flush=True)
     report = benchmark_report(benchmark_rows)
+    report["whisper_basic"] = _whisper_basic_summary(benchmark_rows)
+    report["teacher_confidence"] = {
+        "mean": statistics.fmean(confidences),
+        "p50": statistics.median(confidences),
+        "min": min(confidences),
+        "max": max(confidences),
+    }
     result: dict[str, object] = {
         "schema_version": 1,
         "teacher": teacher.name,

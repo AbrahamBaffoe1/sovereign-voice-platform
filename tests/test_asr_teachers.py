@@ -3,8 +3,9 @@ from pathlib import Path
 import pytest
 
 from training.asr.pseudo_label import _training_rows
-from training.asr.teacher_benchmark import _apply_language_prefix, _manifest_rows
+from training.asr.teacher_benchmark import _apply_language_prefix, _manifest_rows, _normalized_error_summary
 from training.asr.teacher_registry import get_teacher, load_teacher_registry
+from training.benchmarks.speech import BenchmarkUtterance
 
 
 def _write_jsonl(path: Path, rows: list[str]) -> None:
@@ -64,3 +65,11 @@ def test_dondo_language_prefix_prepends_one_hot_feature_frame() -> None:
     assert prefixed["input_features"][0, 0, 2].item() == 1.0
     assert prefixed["input_features"][0, 0].sum().item() == 1.0
     assert tuple(prefixed["attention_mask"].shape) == (1, 4)
+
+
+def test_compatibility_normalizer_changes_metric_without_changing_rows() -> None:
+    rows = [BenchmarkUtterance(reference="Hello, WORLD!", hypothesis="hello world", audio_seconds=1.0, latency_seconds=0.1)]
+    summary = _normalized_error_summary(rows, lambda text: text.replace(",", "").replace("!", "").casefold())
+    assert summary["wer"] == 0.0
+    assert summary["cer"] == 0.0
+    assert summary["sentence_accuracy"] == 1.0
