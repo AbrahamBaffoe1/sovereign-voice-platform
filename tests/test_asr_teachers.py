@@ -73,3 +73,29 @@ def test_compatibility_normalizer_changes_metric_without_changing_rows() -> None
     assert summary["wer"] == 0.0
     assert summary["cer"] == 0.0
     assert summary["sentence_accuracy"] == 1.0
+
+
+def test_pseudo_label_accepts_legacy_train_contract_and_audio_path(tmp_path: Path) -> None:
+    manifest = tmp_path / "train-source.jsonl"
+    _write_jsonl(
+        manifest,
+        [
+            '{"audio_path":"a.flac","text":"human","source_split":"train",'
+            '"operational_class":"TRAIN","allow_optimizer_updates":true}'
+        ],
+    )
+    rows = _training_rows(manifest, limit=None)
+    assert rows[0]["audio_filepath"] == "a.flac"
+
+
+def test_pseudo_label_rejects_evaluation_only_contract(tmp_path: Path) -> None:
+    manifest = tmp_path / "eval.jsonl"
+    _write_jsonl(
+        manifest,
+        [
+            '{"audio_path":"a.mp3","text":"eval","split":"test",'
+            '"operational_class":"EVALUATION_ONLY","allow_optimizer_updates":false}'
+        ],
+    )
+    with pytest.raises(ValueError, match="non-train split"):
+        _training_rows(manifest, limit=None)

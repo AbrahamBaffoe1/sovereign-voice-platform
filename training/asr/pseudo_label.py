@@ -16,12 +16,22 @@ def _training_rows(path: Path, *, limit: int | None) -> list[dict[str, object]]:
     rows = read_jsonl(path)
     selected: list[dict[str, object]] = []
     for row in rows:
-        split = row.get("split")
+        split = row.get("split") or row.get("source_split")
         if split not in {None, "train"}:
             raise ValueError(f"refusing pseudo-label input containing non-train split: {split!r}")
-        if not row.get("audio_filepath"):
-            raise ValueError(f"{path}: row missing audio_filepath")
-        selected.append(row)
+        operational_class = row.get("operational_class")
+        if operational_class not in {None, "TRAIN"}:
+            raise ValueError(
+                f"refusing pseudo-label input with non-training operational class: {operational_class!r}"
+            )
+        if row.get("allow_optimizer_updates") is False:
+            raise ValueError("refusing pseudo-label input explicitly barred from optimizer updates")
+        audio_path = row.get("audio_filepath") or row.get("audio_path")
+        if not audio_path:
+            raise ValueError(f"{path}: row missing audio path")
+        normalized = dict(row)
+        normalized["audio_filepath"] = str(audio_path)
+        selected.append(normalized)
         if limit is not None and len(selected) >= limit:
             break
     if not selected:
@@ -37,6 +47,7 @@ def generate_pseudo_labels(
     limit: int | None = None,
     device: str = "auto",
     min_confidence: float = 0.0,
+    model_source: str | None = None,
 ) -> dict[str, object]:
     """Infer labels only for training examples; validation/test manifests are rejected by construction."""
     if not 0.0 <= min_confidence <= 1.0:
@@ -48,14 +59,17 @@ def generate_pseudo_labels(
         raise RuntimeError(f"teacher family {teacher.family!r} is not implemented yet")
     rows = _training_rows(manifest, limit=limit)
     source_manifest_sha256 = file_sha256(manifest)
-    processor, model, torch = _load_ctc_teacher(teacher.model_id, device)
+    resolved_model_source = model_source or teacher.model_id
+    processor, model, torch = _load_ctc_teacher(resolved_model_source, device)
     output.parent.mkdir(parents=True, exist_ok=True)
     emitted = 0
     with output.open("w", encoding="utf-8") as handle:
         for index, row in enumerate(rows, 1):
             audio_path = Path(str(row["audio_filepath"]))
             waveform, duration = _load_audio(audio_path)
-            hypothesis, confidence = _ctc_transcribe(processor, model, torch, waveform)
+            hypothesis, confidence = _ctc_transcribe(
+                processor, model, torch, waveform, language_prefix_id=teacher.language_prefix_id
+            )
             hypothesis = hypothesis.strip()
             if not hypothesis or confidence < min_confidence:
                 continue
@@ -72,6 +86,8 @@ def generate_pseudo_labels(
                 "teacher_name": teacher.name,
                 "teacher_model_id": teacher.model_id,
                 "teacher_family": teacher.family,
+                "teacher_language_prefix_id": teacher.language_prefix_id,
+                "teacher_model_source": resolved_model_source,
                 "teacher_confidence": confidence,
                 "source_manifest": str(manifest),
                 "source_manifest_sha256": source_manifest_sha256,
@@ -83,6 +99,8 @@ def generate_pseudo_labels(
         "schema_version": 1,
         "teacher": teacher.name,
         "model_id": teacher.model_id,
+        "model_source": resolved_model_source,
+        "language_prefix_id": teacher.language_prefix_id,
         "input_manifest": str(manifest),
         "input_manifest_sha256": source_manifest_sha256,
         "input_rows": len(rows),
@@ -106,6 +124,7 @@ def main() -> None:
     parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--device", default="auto")
     parser.add_argument("--min-confidence", type=float, default=0.0)
+    parser.add_argument("--model-source", default=None, help="Optional local checkpoint path")
     args = parser.parse_args()
     if args.limit is not None and args.limit < 1:
         raise SystemExit("--limit must be positive")
@@ -118,6 +137,7 @@ def main() -> None:
                 limit=args.limit,
                 device=args.device,
                 min_confidence=args.min_confidence,
+                model_source=args.model_source,
             ),
             ensure_ascii=False,
             indent=2,
