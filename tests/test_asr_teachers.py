@@ -1,3 +1,4 @@
+import json
 from pathlib import Path
 
 import pytest
@@ -122,3 +123,54 @@ def test_teacher_comparison_confidence_selector_uses_higher_confidence(tmp_path:
     report = compare_predictions(left, right)
     assert report["confidence_selected"]["right_selected"] == 1
     assert report["confidence_selected"]["metrics"]["global"]["wer"] == 0.0
+
+
+def test_build_distillation_manifest_preserves_train_governance(tmp_path: Path) -> None:
+    from training.asr.build_distillation_manifest import build_distillation_manifest
+
+    audio_hash = "a" * 64
+    source = tmp_path / "source.jsonl"
+    pseudo = tmp_path / "pseudo.jsonl"
+    frozen = tmp_path / "frozen.txt"
+    output = tmp_path / "distill.jsonl"
+    _write_jsonl(source, [json.dumps({
+        "audio_path": "/x/a.flac", "audio_sha256": audio_hash,
+        "operational_class": "TRAIN", "allow_optimizer_updates": True,
+        "commercial_training_eligible": True, "source_id": "train",
+        "domains": ["twi"], "license": "cc-by-4.0",
+    })])
+    _write_jsonl(pseudo, [json.dumps({
+        "audio_filepath": "/x/a.flac", "text": "asɛm", "teacher_name": "tuba",
+        "teacher_model_id": "model", "teacher_confidence": 0.95,
+    })])
+    frozen.write_text("b" * 64 + "\n", encoding="utf-8")
+    report = build_distillation_manifest(
+        source_manifest=source, pseudo_manifest=pseudo, output=output, frozen_eval_hashes=frozen
+    )
+    row = json.loads(output.read_text(encoding="utf-8"))
+    assert report["output_rows"] == 1
+    assert row["schema_version"] == "nexora.distillation-row.v1"
+    assert row["target_source"] == "teacher-pseudo-label"
+    assert row["target_text"] == "asɛm"
+    assert row["audio_sha256"] == audio_hash
+
+
+def test_build_distillation_manifest_rejects_frozen_eval_hash(tmp_path: Path) -> None:
+    from training.asr.build_distillation_manifest import build_distillation_manifest
+
+    audio_hash = "c" * 64
+    source = tmp_path / "source.jsonl"
+    pseudo = tmp_path / "pseudo.jsonl"
+    frozen = tmp_path / "frozen.txt"
+    _write_jsonl(source, [json.dumps({
+        "audio_path": "/x/a.flac", "audio_sha256": audio_hash,
+        "operational_class": "TRAIN", "allow_optimizer_updates": True,
+        "commercial_training_eligible": True,
+    })])
+    _write_jsonl(pseudo, [json.dumps({"audio_filepath": "/x/a.flac", "text": "x"})])
+    frozen.write_text(audio_hash + "\n", encoding="utf-8")
+    with pytest.raises(ValueError, match="evaluation leakage"):
+        build_distillation_manifest(
+            source_manifest=source, pseudo_manifest=pseudo, output=tmp_path / "o.jsonl",
+            frozen_eval_hashes=frozen,
+        )
